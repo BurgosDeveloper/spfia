@@ -1,4 +1,5 @@
 import { getCachedData, setCachedData } from "../cache/persistentCache";
+import { fetchMatchesFromApiFootball } from "./apiFootball";
 
 export interface MatchFixture {
   id: number;
@@ -45,6 +46,7 @@ function getHeaders() {
 
 /**
  * Obtiene los partidos programados para una fecha específica y liga seleccionada.
+ * Si football-data.org no incluye la liga o devuelve vacío/403, intenta automáticamente con API-Football.
  */
 export async function fetchMatchesForDateAndLeague(
   dateStr: string,
@@ -58,33 +60,37 @@ export async function fetchMatchesForDateAndLeague(
 
   try {
     const res = await fetch(url, { headers: getHeaders(), cache: "no-store" });
-    if (!res.ok) {
-      console.warn(`football-data HTTP ${res.status} para ${leagueCode}`);
-      return [];
+    if (res.ok) {
+      const data = await res.json();
+      const rawMatches = data.matches || [];
+
+      if (rawMatches.length > 0) {
+        const matches: MatchFixture[] = rawMatches.map((m: any) => ({
+          id: m.id,
+          utcDate: m.utcDate,
+          status: m.status,
+          matchday: m.matchday,
+          leagueCode: leagueCode,
+          leagueName: SUPPORTED_LEAGUES[leagueCode]?.name || leagueCode,
+          homeTeam: { id: m.homeTeam.id, name: m.homeTeam.name, shortName: m.homeTeam.shortName },
+          awayTeam: { id: m.awayTeam.id, name: m.awayTeam.name, shortName: m.awayTeam.shortName },
+          score: m.score,
+        }));
+
+        await setCachedData(cacheKey, matches, 43200);
+        return matches;
+      }
     }
-
-    const data = await res.json();
-    const rawMatches = data.matches || [];
-
-    const matches: MatchFixture[] = rawMatches.map((m: any) => ({
-      id: m.id,
-      utcDate: m.utcDate,
-      status: m.status,
-      matchday: m.matchday,
-      leagueCode: leagueCode,
-      leagueName: SUPPORTED_LEAGUES[leagueCode]?.name || leagueCode,
-      homeTeam: { id: m.homeTeam.id, name: m.homeTeam.name, shortName: m.homeTeam.shortName },
-      awayTeam: { id: m.awayTeam.id, name: m.awayTeam.name, shortName: m.awayTeam.shortName },
-      score: m.score,
-    }));
-
-    // Cache por 12 horas para partidos futuros
-    await setCachedData(cacheKey, matches, 43200);
-    return matches;
   } catch (err) {
-    console.error(`Error consultando partidos de ${leagueCode}:`, err);
-    return [];
+    console.warn(`football-data.org falló para ${leagueCode}, intentando fallback API-Football...`);
   }
+
+  // Fallback automático con API-Football (api-sports.io)
+  const fallbackMatches = await fetchMatchesFromApiFootball(dateStr, leagueCode);
+  if (fallbackMatches.length > 0) {
+    await setCachedData(cacheKey, fallbackMatches, 21600);
+  }
+  return fallbackMatches;
 }
 
 /**

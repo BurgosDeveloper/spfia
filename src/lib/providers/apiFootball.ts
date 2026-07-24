@@ -1,4 +1,5 @@
 import { getCachedData, setCachedData } from "../cache/persistentCache";
+import { MatchFixture, SUPPORTED_LEAGUES } from "./footballData";
 
 export interface LineupStatus {
   status: "CONFIRMED" | "AVAILABLE_PARTIAL" | "NOT_AVAILABLE";
@@ -38,6 +39,91 @@ function normTeamName(name: string): string {
     .replace(/\b(fc|cf|cd|ud|sd|sc|ac|afc|club|deportivo|real)\b/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Fallback de consulta de partidos desde API-Football (api-sports.io)
+ * cuando football-data.org no incluye la liga (ej. Argentina LPF, España Segunda SD, etc.)
+ */
+export async function fetchMatchesFromApiFootball(
+  dateStr: string,
+  leagueCode: string
+): Promise<MatchFixture[]> {
+  const cacheKey = `apif:fixtures:${dateStr}:${leagueCode}`;
+  const cached = await getCachedData<MatchFixture[]>(cacheKey);
+  if (cached) return cached;
+
+  if (!API_KEY) return [];
+
+  try {
+    const url = `${BASE_URL}/fixtures?date=${dateStr}`;
+    const res = await fetch(url, { headers: getHeaders(), cache: "no-store" });
+    if (!res.ok) return [];
+
+    const data = await res.json();
+    const responseList = data.response || [];
+
+    const leagueInfo = SUPPORTED_LEAGUES[leagueCode];
+    const targetCountry = (leagueInfo?.country || "").toLowerCase();
+    const targetCode = leagueCode.toUpperCase();
+
+    const matches: MatchFixture[] = [];
+
+    for (const item of responseList) {
+      const fLeague = item.league || {};
+      const country = (fLeague.country || "").toLowerCase();
+      const name = (fLeague.name || "").toLowerCase();
+
+      let isMatch = false;
+
+      if (targetCode === "LPF" && (country === "argentina" || name.includes("primera"))) {
+        isMatch = true;
+      } else if (targetCode === "SD" && country === "spain" && (name.includes("segunda") || name.includes("hypermotion"))) {
+        isMatch = true;
+      } else if (targetCode === "PD" && country === "spain" && (name.includes("primera") || name.includes("la liga"))) {
+        isMatch = true;
+      } else if (targetCode === "PL" && country === "england" && name.includes("premier")) {
+        isMatch = true;
+      } else if (targetCode === "ELC" && country === "england" && name.includes("championship")) {
+        isMatch = true;
+      } else if (targetCode === "FL1" && country === "france" && name.includes("ligue 1")) {
+        isMatch = true;
+      } else if (targetCode === "SA" && country === "italy" && name.includes("serie a")) {
+        isMatch = true;
+      } else if (targetCode === "BL1" && country === "germany" && name.includes("bundesliga")) {
+        isMatch = true;
+      } else if (targetCode === "BSA" && country === "brazil" && name.includes("serie a")) {
+        isMatch = true;
+      } else if (targetCountry && country === targetCountry) {
+        isMatch = true;
+      }
+
+      if (isMatch) {
+        matches.push({
+          id: item.fixture.id,
+          utcDate: item.fixture.date,
+          status: item.fixture.status?.short || "NS",
+          matchday: fLeague.round ? parseInt(fLeague.round.replace(/\D/g, "") || "1", 10) : 1,
+          leagueCode: leagueCode,
+          leagueName: leagueInfo?.name || fLeague.name,
+          homeTeam: { id: item.teams.home.id, name: item.teams.home.name },
+          awayTeam: { id: item.teams.away.id, name: item.teams.away.name },
+          score: {
+            fullTime: {
+              home: item.goals.home,
+              away: item.goals.away,
+            },
+          },
+        });
+      }
+    }
+
+    await setCachedData(cacheKey, matches, 21600); // 6 horas de caché
+    return matches;
+  } catch (err) {
+    console.error(`Error en fallback API-Football para ${leagueCode}:`, err);
+    return [];
+  }
 }
 
 /**
