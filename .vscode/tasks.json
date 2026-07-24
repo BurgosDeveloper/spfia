@@ -1,0 +1,137 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Rebuild predictor",
+			"type": "shell",
+			"command": "docker compose up -d --build predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Test selector",
+			"type": "shell",
+			"command": "curl -s -X POST http://localhost:8000/v1/selector/run -H \"Content-Type: application/json\" -d \"{\\\"date\\\":\\\"2026-01-30\\\",\\\"max_candidates\\\":5,\\\"min_minutes_to_kickoff\\\":60}\"",
+			"isBackground": false
+		},
+		{
+			"label": "Test selector (curl.exe)",
+			"type": "shell",
+			"command": "curl.exe -s -X POST http://localhost:8000/v1/selector/run -H \"Content-Type: application/json\" -d \"{\\\"date\\\":\\\"2026-01-30\\\",\\\"max_candidates\\\":5,\\\"min_minutes_to_kickoff\\\":60}\"",
+			"isBackground": false
+		},
+		{
+			"label": "Test selector (IRM)",
+			"type": "shell",
+			"command": "$body = '{\"date\":\"2026-01-30\",\"max_candidates\":5,\"min_minutes_to_kickoff\":60}'; Invoke-RestMethod -Method Post -Uri 'http://localhost:8000/v1/selector/run' -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 20",
+			"isBackground": false
+		},
+		{
+			"label": "Test selector (IRM + error body)",
+			"type": "shell",
+			"command": "$body = '{\"date\":\"2026-01-30\",\"max_candidates\":5,\"min_minutes_to_kickoff\":60}'; try { Invoke-RestMethod -Method Post -Uri 'http://localhost:8000/v1/selector/run' -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 20 } catch { Write-Host $_.Exception.Message; if ($_.ErrorDetails -and $_.ErrorDetails.Message) { Write-Host $_.ErrorDetails.Message } }",
+			"isBackground": false
+		},
+		{
+			"label": "Test selector (IRM json build)",
+			"type": "shell",
+			"command": "$body = @{ date = '2026-01-30'; max_candidates = 5; min_minutes_to_kickoff = 60 } | ConvertTo-Json; Invoke-RestMethod -Method Post -Uri 'http://localhost:8000/v1/selector/run' -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 20",
+			"isBackground": false
+		},
+		{
+			"label": "Tail predictor logs",
+			"type": "shell",
+			"command": "docker logs --tail 200 spfia-predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Rebuild predictor (after logging)",
+			"type": "shell",
+			"command": "docker compose up -d --build predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Test selector again",
+			"type": "shell",
+			"command": "$body = @{ date = '2026-01-30'; max_candidates = 5; min_minutes_to_kickoff = 60 } | ConvertTo-Json; Invoke-RestMethod -Method Post -Uri 'http://localhost:8000/v1/selector/run' -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 20",
+			"isBackground": false
+		},
+		{
+			"label": "Tail predictor logs (after provider logging)",
+			"type": "shell",
+			"command": "docker logs --tail 200 spfia-predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Rebuild predictor (log always)",
+			"type": "shell",
+			"command": "docker compose up -d --build predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Test selector (after always-log)",
+			"type": "shell",
+			"command": "$body = @{ date = '2026-01-30'; max_candidates = 5; min_minutes_to_kickoff = 60 } | ConvertTo-Json; Invoke-RestMethod -Method Post -Uri 'http://localhost:8000/v1/selector/run' -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 20",
+			"isBackground": false
+		},
+		{
+			"label": "Tail predictor logs (check provider log lines)",
+			"type": "shell",
+			"command": "docker logs --tail 120 spfia-predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Rebuild predictor (server_date log)",
+			"type": "shell",
+			"command": "docker compose up -d --build predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Selector for server_date log",
+			"type": "shell",
+			"command": "$body = @{ date = '2026-01-30'; max_candidates = 2; min_minutes_to_kickoff = 60 } | ConvertTo-Json; Invoke-RestMethod -Method Post -Uri 'http://localhost:8000/v1/selector/run' -ContentType 'application/json' -Body $body | Out-Null; docker logs --tail 40 spfia-predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Tail predictor logs (40)",
+			"type": "shell",
+			"command": "docker logs --tail 60 spfia-predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Rebuild predictor (fallback per comp)",
+			"type": "shell",
+			"command": "docker compose up -d --build predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Selector run (fallback) + logs",
+			"type": "shell",
+			"command": "$body = @{ date = '2026-01-30'; max_candidates = 2; min_minutes_to_kickoff = 60 } | ConvertTo-Json; Invoke-RestMethod -Method Post -Uri 'http://localhost:8000/v1/selector/run' -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 20; docker logs --tail 80 spfia-predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Selector run (fallback) response only",
+			"type": "shell",
+			"command": "$body = @{ date = '2026-01-30'; max_candidates = 5; min_minutes_to_kickoff = 60 } | ConvertTo-Json; Invoke-RestMethod -Method Post -Uri 'http://localhost:8000/v1/selector/run' -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 20",
+			"isBackground": false
+		},
+		{
+			"label": "Selector 2026-01-31 (defaults)",
+			"type": "shell",
+			"command": "$body = @{ date = '2026-01-31'; max_candidates = 5; min_minutes_to_kickoff = 60 } | ConvertTo-Json; try { Invoke-RestMethod -Method Post -Uri 'http://localhost:8000/v1/selector/run' -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 30 } catch { Write-Host $_.Exception.Message; if ($_.ErrorDetails -and $_.ErrorDetails.Message) { Write-Host $_.ErrorDetails.Message } exit 1 }",
+			"isBackground": false
+		},
+		{
+			"label": "Tail logs after 2026-01-31",
+			"type": "shell",
+			"command": "docker logs --tail 120 spfia-predictor",
+			"isBackground": false
+		},
+		{
+			"label": "Rebuild predictor (odds + auto-settle)",
+			"type": "shell",
+			"command": "docker compose up -d --build predictor",
+			"isBackground": false
+		}
+	]
+}

@@ -1,0 +1,168 @@
+import { getCachedData, setCachedData } from "../cache/persistentCache";
+
+export interface LineupStatus {
+  status: "CONFIRMED" | "AVAILABLE_PARTIAL" | "NOT_AVAILABLE";
+  confidence: number; // 1.0 para CONFIRMED, 0.96 para PARTIAL, 0.92 para NOT_AVAILABLE
+  homeStartXiCount: number;
+  awayStartXiCount: number;
+}
+
+export interface TeamCornerStats {
+  teamName: string;
+  avgCornersEarnedHome: number;
+  avgCornersConcededHome: number;
+  avgCornersEarnedAway: number;
+  avgCornersConcededAway: number;
+  overallAvgCorners: number;
+}
+
+const API_KEY = process.env.API_FOOTBALL_DATA_TOKEN || "f10f4374d9c89e9218f7e716912251af";
+const BASE_URL = "https://v3.football.api-sports.io";
+
+function getHeaders() {
+  return {
+    "x-apisports-key": API_KEY,
+    "Accept": "application/json",
+  };
+}
+
+/**
+ * Normaliza nombres de equipos para hacer matching con API-Football.
+ */
+function normTeamName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(fc|cf|cd|ud|sd|sc|ac|afc|club|deportivo|real)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Consulta alineaciones pre-partido si el token está activo.
+ */
+export async function fetchLineupsForMatch(
+  dateStr: string,
+  homeTeam: string,
+  awayTeam: string
+): Promise<LineupStatus> {
+  const normHome = normTeamName(homeTeam);
+  const normAway = normTeamName(awayTeam);
+  const cacheKey = `apif:lineups:${dateStr}:${normHome}:${normAway}`;
+
+  const cached = await getCachedData<LineupStatus>(cacheKey);
+  if (cached) return cached;
+
+  if (!API_KEY) {
+    return { status: "NOT_AVAILABLE", confidence: 0.92, homeStartXiCount: 0, awayStartXiCount: 0 };
+  }
+
+  try {
+    // 1. Buscar fixture ID
+    const searchUrl = `${BASE_URL}/fixtures?date=${dateStr}&search=${encodeURIComponent(homeTeam.split(" ")[0])}`;
+    const resSearch = await fetch(searchUrl, { headers: getHeaders(), cache: "no-store" });
+    
+    if (!resSearch.ok) {
+      return { status: "NOT_AVAILABLE", confidence: 0.92, homeStartXiCount: 0, awayStartXiCount: 0 };
+    }
+
+    const searchData = await resSearch.json();
+    const fixtures = searchData.response || [];
+
+    const matchedFixture = fixtures.find((f: any) => {
+      const fHome = normTeamName(f.teams?.home?.name || "");
+      const fAway = normTeamName(f.teams?.away?.name || "");
+      return fHome.includes(normHome) || normHome.includes(fHome) || fAway.includes(normAway);
+    });
+
+    if (!matchedFixture) {
+      const fallback: LineupStatus = { status: "NOT_AVAILABLE", confidence: 0.92, homeStartXiCount: 0, awayStartXiCount: 0 };
+      await setCachedData(cacheKey, fallback, 3600);
+      return fallback;
+    }
+
+    const fixtureId = matchedFixture.fixture?.id;
+    if (!fixtureId) {
+      const fallback: LineupStatus = { status: "NOT_AVAILABLE", confidence: 0.92, homeStartXiCount: 0, awayStartXiCount: 0 };
+      await setCachedData(cacheKey, fallback, 3600);
+      return fallback;
+    }
+
+    // 2. Obtener lineups
+    const lineupsUrl = `${BASE_URL}/fixtures/lineups?fixture=${fixtureId}`;
+    const resLineups = await fetch(lineupsUrl, { headers: getHeaders(), cache: "no-store" });
+    if (!resLineups.ok) {
+      const fallback: LineupStatus = { status: "NOT_AVAILABLE", confidence: 0.92, homeStartXiCount: 0, awayStartXiCount: 0 };
+      await setCachedData(cacheKey, fallback, 3600);
+      return fallback;
+    }
+
+    const lineupsData = await resLineups.json();
+    const lineupList = lineupsData.response || [];
+
+    let homeXi = 0;
+    let awayXi = 0;
+
+    if (lineupList.length >= 2) {
+      homeXi = lineupList[0]?.startXI?.length || 0;
+      awayXi = lineupList[1]?.startXI?.length || 0;
+    }
+
+    let status: "CONFIRMED" | "AVAILABLE_PARTIAL" | "NOT_AVAILABLE" = "NOT_AVAILABLE";
+    let confidence = 0.92;
+
+    if (homeXi === 11 && awayXi === 11) {
+      status = "CONFIRMED";
+      confidence = 1.0;
+    } else if (homeXi > 0 || awayXi > 0) {
+      status = "AVAILABLE_PARTIAL";
+      confidence = 0.96;
+    }
+
+    const result: LineupStatus = {
+      status,
+      confidence,
+      homeStartXiCount: homeXi,
+      awayStartXiCount: awayXi,
+    };
+
+    await setCachedData(cacheKey, result, status === "CONFIRMED" ? 86400 : 900);
+    return result;
+  } catch (err) {
+    console.error("Error consultando alineaciones en API-Football:", err);
+    return { status: "NOT_AVAILABLE", confidence: 0.92, homeStartXiCount: 0, awayStartXiCount: 0 };
+  }
+}
+
+/**
+ * Obtiene promedios de córneres por liga y equipo (o usa promedios históricos calibrados por liga).
+ */
+export function getDefaultCornerStatsForLeague(leagueCode: string): {
+  avgCornersHome: number;
+  avgCornersAway: number;
+} {
+  switch (leagueCode) {
+    case "PL": // Premier League (~10.4 córneres/partido)
+      return { avgCornersHome: 5.6, avgCornersAway: 4.8 };
+    case "PD": // LaLiga España (~9.6 córneres/partido)
+      return { avgCornersHome: 5.1, avgCornersAway: 4.5 };
+    case "SD": // LaLiga Segunda (~9.8 córneres/partido)
+      return { avgCornersHome: 5.3, avgCornersAway: 4.5 };
+    case "BL1": // Bundesliga (~10.1 córneres/partido)
+      return { avgCornersHome: 5.4, avgCornersAway: 4.7 };
+    case "SA": // Serie A Italia (~9.8 córneres/partido)
+      return { avgCornersHome: 5.2, avgCornersAway: 4.6 };
+    case "FL1": // Ligue 1 Francia (~9.5 córneres/partido)
+      return { avgCornersHome: 5.0, avgCornersAway: 4.5 };
+    case "ELC": // Championship (~10.5 córneres/partido)
+      return { avgCornersHome: 5.7, avgCornersAway: 4.8 };
+    case "BSA": // Brasil Serie A (~10.2 córneres/partido)
+      return { avgCornersHome: 5.5, avgCornersAway: 4.7 };
+    case "LPF": // Argentina Primera (~9.4 córneres/partido)
+      return { avgCornersHome: 5.0, avgCornersAway: 4.4 };
+    default:
+      return { avgCornersHome: 5.2, avgCornersAway: 4.5 };
+  }
+}

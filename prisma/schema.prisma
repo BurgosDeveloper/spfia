@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+}
+
+model Candidate {
+  id           String   @id @default(uuid())
+  date         String   
+  league       String
+  fixtureId    String   @unique
+  homeTeam     String
+  awayTeam     String
+  kickoffUtc   DateTime
+  executeAtUtc DateTime
+  status       String   @default("CANDIDATE") 
+  snapshot     Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  picks        Pick[]
+}
+
+model Pick {
+  id           String    @id @default(uuid())
+  candidateId  String
+  decision     String    
+  runTag       String    @default("")
+  market       String    
+  selection    String    
+  line         Float     
+  probability  Float
+  pLower       Float     @default(0.0)
+  odds         Float     @default(0.0)
+  ev           Float     @default(0.0)
+  outcome      String    @default("") 
+  profitUnits  Float     @default(0.0)
+  settledAtUtc DateTime?
+  reasoning    Json      @default("{}")
+  createdAt    DateTime  @default(now())
+
+  candidate    Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+}
+
+model OddsSnapshot {
+  id            String   @id @default(uuid())
+  fixtureId     String
+  source        String   @default("manual")
+  odds          Json     @default("{}")
+  capturedAtUtc DateTime @default(now())
+}
+
+model ApiCache {
+  key          String   @id
+  value        Json
+  expiresAtUtc DateTime
+  createdAt    DateTime @default(now())
+}
