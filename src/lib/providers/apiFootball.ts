@@ -54,15 +54,15 @@ function normTeamName(name: string): string {
 }
 
 /**
- * Consulta de partidos desde API-Football (api-sports.io).
- * Filtra la respuesta completa de partidos por fecha (evita el error de parámetro season de la API)
- * asegurando la extracción exacta de la Liga Profesional y Primera División.
+ * Consulta de partidos desde API-Football (api-sports.io)
+ * Aplica una Ventana de Tiempo por Jornada Local (05:00 UTC del día actual a 04:59 UTC del día siguiente)
+ * para corregir desfasajes huso horario y capturar los partidos exactos de la jornada.
  */
 export async function fetchMatchesFromApiFootball(
   dateStr: string,
   leagueCode: string
 ): Promise<MatchFixture[]> {
-  const cacheKey = `apif:v3:fixtures:${dateStr}:${leagueCode}`;
+  const cacheKey = `apif:v4:matchday:${dateStr}:${leagueCode}`;
   const cached = await getCachedData<MatchFixture[]>(cacheKey);
   if (cached) return cached;
 
@@ -72,34 +72,58 @@ export async function fetchMatchesFromApiFootball(
   const leagueInfo = SUPPORTED_LEAGUES[leagueCode];
   const targetCode = leagueCode.toUpperCase();
 
+  // Calcular la fecha del día siguiente
+  const currDateObj = new Date(dateStr + "T00:00:00Z");
+  const nextDateObj = new Date(currDateObj.getTime() + 86400000);
+  const nextDateStr = nextDateObj.toISOString().split("T")[0];
+
+  // Definir la ventana exacta de la jornada local en UTC
+  const windowStart = new Date(dateStr + "T05:00:00Z").getTime();
+  const windowEnd = new Date(nextDateStr + "T04:59:59Z").getTime();
+
   try {
-    const url = `${BASE_URL}/fixtures?date=${dateStr}`;
-    const res = await fetch(url, { headers: getHeaders(), cache: "no-store" });
-    if (!res.ok) return [];
+    // Consultar día actual y día siguiente para cubrir partidos nocturnos de la jornada
+    const [resCurr, resNext] = await Promise.all([
+      fetch(`${BASE_URL}/fixtures?date=${dateStr}`, { headers: getHeaders(), cache: "no-store" }),
+      fetch(`${BASE_URL}/fixtures?date=${nextDateStr}`, { headers: getHeaders(), cache: "no-store" }),
+    ]);
 
-    const data = await res.json();
-    const responseList = data.response || [];
+    let responseList: any[] = [];
+    if (resCurr.ok) {
+      const dCurr = await resCurr.json();
+      responseList = responseList.concat(dCurr.response || []);
+    }
+    if (resNext.ok) {
+      const dNext = await resNext.json();
+      responseList = responseList.concat(dNext.response || []);
+    }
 
-    const matches: MatchFixture[] = [];
+    const matchesMap = new Map<number, MatchFixture>();
 
     for (const item of responseList) {
       const fLeague = item.league || {};
       const fLeagueId = fLeague.id;
       const fCountry = (fLeague.country || "").toLowerCase();
       const fName = (fLeague.name || "").toLowerCase();
+      const fDate = item.fixture?.date || "";
 
       // Excluir ligas de reservas o juveniles
       if (fName.includes("reserve") || fName.includes("u20") || fName.includes("u21") || fName.includes("u19")) {
         continue;
       }
 
+      // Validar ventana de tiempo de la jornada local
+      const fixtureTime = new Date(fDate).getTime();
+      if (fixtureTime < windowStart || fixtureTime > windowEnd) {
+        continue;
+      }
+
       let isMatch = false;
 
-      // 1. Coincidencia directa por ID de Liga
+      // Coincidencia por ID de Liga directo o coincidencia secundaria
       if (targetLeagueId && fLeagueId === targetLeagueId) {
         isMatch = true;
       } else {
-        // 2. Coincidencia secundaria por País y Nombre de Liga
         if (targetCode === "LPF" && (fCountry === "argentina" && (fName.includes("liga profesional") || fName.includes("primera")))) {
           isMatch = true;
         } else if (targetCode === "SD" && fCountry === "spain" && (fName.includes("segunda") || fName.includes("hypermotion"))) {
@@ -121,8 +145,8 @@ export async function fetchMatchesFromApiFootball(
         }
       }
 
-      if (isMatch) {
-        matches.push({
+      if (isMatch && !matchesMap.has(item.fixture.id)) {
+        matchesMap.set(item.fixture.id, {
           id: item.fixture.id,
           utcDate: item.fixture.date,
           status: item.fixture.status?.short || "NS",
@@ -141,6 +165,7 @@ export async function fetchMatchesFromApiFootball(
       }
     }
 
+    const matches = Array.from(matchesMap.values());
     await setCachedData(cacheKey, matches, 21600); // 6 horas de caché
     return matches;
   } catch (err) {
