@@ -54,28 +54,26 @@ function normTeamName(name: string): string {
 }
 
 /**
- * Consulta de partidos desde API-Football (api-sports.io)
- * Filtrado estricto por League ID oficial y Fecha seleccionada.
+ * Consulta de partidos desde API-Football (api-sports.io).
+ * Filtra la respuesta completa de partidos por fecha (evita el error de parámetro season de la API)
+ * asegurando la extracción exacta de la Liga Profesional y Primera División.
  */
 export async function fetchMatchesFromApiFootball(
   dateStr: string,
   leagueCode: string
 ): Promise<MatchFixture[]> {
-  const cacheKey = `apif:v2:fixtures:${dateStr}:${leagueCode}`;
+  const cacheKey = `apif:v3:fixtures:${dateStr}:${leagueCode}`;
   const cached = await getCachedData<MatchFixture[]>(cacheKey);
   if (cached) return cached;
 
   if (!API_KEY) return [];
 
-  const leagueId = API_FOOTBALL_LEAGUE_IDS[leagueCode];
+  const targetLeagueId = API_FOOTBALL_LEAGUE_IDS[leagueCode];
   const leagueInfo = SUPPORTED_LEAGUES[leagueCode];
+  const targetCode = leagueCode.toUpperCase();
 
   try {
-    // Si tenemos League ID directo, filtramos por league=ID & date=dateStr
-    const url = leagueId
-      ? `${BASE_URL}/fixtures?date=${dateStr}&league=${leagueId}`
-      : `${BASE_URL}/fixtures?date=${dateStr}`;
-
+    const url = `${BASE_URL}/fixtures?date=${dateStr}`;
     const res = await fetch(url, { headers: getHeaders(), cache: "no-store" });
     if (!res.ok) return [];
 
@@ -86,36 +84,61 @@ export async function fetchMatchesFromApiFootball(
 
     for (const item of responseList) {
       const fLeague = item.league || {};
-      const fDate = item.fixture?.date || "";
+      const fLeagueId = fLeague.id;
+      const fCountry = (fLeague.country || "").toLowerCase();
+      const fName = (fLeague.name || "").toLowerCase();
 
-      // Filtro estricto por fecha (YYYY-MM-DD)
-      const fixtureDateStr = fDate.slice(0, 10);
-      if (fixtureDateStr !== dateStr) {
+      // Excluir ligas de reservas o juveniles
+      if (fName.includes("reserve") || fName.includes("u20") || fName.includes("u21") || fName.includes("u19")) {
         continue;
       }
 
-      // Si especificamos leagueId, API-Football ya garantiza la liga exacta.
-      // Si no hay leagueId, filtramos por nombre o país.
-      if (leagueId && fLeague.id !== leagueId) {
-        continue;
+      let isMatch = false;
+
+      // 1. Coincidencia directa por ID de Liga
+      if (targetLeagueId && fLeagueId === targetLeagueId) {
+        isMatch = true;
+      } else {
+        // 2. Coincidencia secundaria por País y Nombre de Liga
+        if (targetCode === "LPF" && (fCountry === "argentina" && (fName.includes("liga profesional") || fName.includes("primera")))) {
+          isMatch = true;
+        } else if (targetCode === "SD" && fCountry === "spain" && (fName.includes("segunda") || fName.includes("hypermotion"))) {
+          isMatch = true;
+        } else if (targetCode === "PD" && fCountry === "spain" && (fName.includes("primera") || fName.includes("la liga"))) {
+          isMatch = true;
+        } else if (targetCode === "PL" && fCountry === "england" && fName.includes("premier")) {
+          isMatch = true;
+        } else if (targetCode === "ELC" && fCountry === "england" && fName.includes("championship")) {
+          isMatch = true;
+        } else if (targetCode === "FL1" && fCountry === "france" && fName.includes("ligue 1")) {
+          isMatch = true;
+        } else if (targetCode === "SA" && fCountry === "italy" && fName.includes("serie a")) {
+          isMatch = true;
+        } else if (targetCode === "BL1" && fCountry === "germany" && fName.includes("bundesliga")) {
+          isMatch = true;
+        } else if (targetCode === "BSA" && fCountry === "brazil" && fName.includes("serie a")) {
+          isMatch = true;
+        }
       }
 
-      matches.push({
-        id: item.fixture.id,
-        utcDate: item.fixture.date,
-        status: item.fixture.status?.short || "NS",
-        matchday: fLeague.round ? parseInt(fLeague.round.replace(/\D/g, "") || "1", 10) : 1,
-        leagueCode: leagueCode,
-        leagueName: leagueInfo?.name || fLeague.name,
-        homeTeam: { id: item.teams.home.id, name: item.teams.home.name },
-        awayTeam: { id: item.teams.away.id, name: item.teams.away.name },
-        score: {
-          fullTime: {
-            home: item.goals.home,
-            away: item.goals.away,
+      if (isMatch) {
+        matches.push({
+          id: item.fixture.id,
+          utcDate: item.fixture.date,
+          status: item.fixture.status?.short || "NS",
+          matchday: fLeague.round ? parseInt(fLeague.round.replace(/\D/g, "") || "1", 10) : 1,
+          leagueCode: leagueCode,
+          leagueName: leagueInfo?.name || fLeague.name,
+          homeTeam: { id: item.teams.home.id, name: item.teams.home.name },
+          awayTeam: { id: item.teams.away.id, name: item.teams.away.name },
+          score: {
+            fullTime: {
+              home: item.goals.home,
+              away: item.goals.away,
+            },
           },
-        },
-      });
+        });
+      }
     }
 
     await setCachedData(cacheKey, matches, 21600); // 6 horas de caché
