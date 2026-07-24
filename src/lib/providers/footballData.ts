@@ -45,14 +45,14 @@ function getHeaders() {
 }
 
 /**
- * Obtiene los partidos programados para una fecha específica y liga seleccionada.
- * Si football-data.org no incluye la liga o devuelve vacío/403, intenta automáticamente con API-Football.
+ * Obtiene los partidos programados para una fecha específica e inspeccionada estrictamente por liga.
+ * Aplica filtro de fecha exacto YYYY-MM-DD y fallback directo hacia API-Football (api-sports.io).
  */
 export async function fetchMatchesForDateAndLeague(
   dateStr: string,
   leagueCode: string
 ): Promise<MatchFixture[]> {
-  const cacheKey = `fd:matches:${dateStr}:${leagueCode}`;
+  const cacheKey = `fd:matches:v2:${dateStr}:${leagueCode}`;
   const cached = await getCachedData<MatchFixture[]>(cacheKey);
   if (cached) return cached;
 
@@ -64,8 +64,14 @@ export async function fetchMatchesForDateAndLeague(
       const data = await res.json();
       const rawMatches = data.matches || [];
 
-      if (rawMatches.length > 0) {
-        const matches: MatchFixture[] = rawMatches.map((m: any) => ({
+      // Filtro estricto de fecha YYYY-MM-DD para evitar desfases de zona horaria
+      const validMatches = rawMatches.filter((m: any) => {
+        const mDate = (m.utcDate || "").slice(0, 10);
+        return mDate === dateStr;
+      });
+
+      if (validMatches.length > 0) {
+        const matches: MatchFixture[] = validMatches.map((m: any) => ({
           id: m.id,
           utcDate: m.utcDate,
           status: m.status,
@@ -82,10 +88,10 @@ export async function fetchMatchesForDateAndLeague(
       }
     }
   } catch (err) {
-    console.warn(`football-data.org falló para ${leagueCode}, intentando fallback API-Football...`);
+    console.warn(`football-data.org falló o restreñido para ${leagueCode}, activando fallback API-Football...`);
   }
 
-  // Fallback automático con API-Football (api-sports.io)
+  // Fallback estricto con API-Football (api-sports.io) por League ID y fecha exacta
   const fallbackMatches = await fetchMatchesFromApiFootball(dateStr, leagueCode);
   if (fallbackMatches.length > 0) {
     await setCachedData(cacheKey, fallbackMatches, 21600);
