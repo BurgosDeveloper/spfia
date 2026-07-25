@@ -15,12 +15,21 @@ import {
 
 interface CandidateCardProps {
   candidate: CandidateResult;
+  activeFilter?: "ALL" | "BET" | "GOALS" | "CORNERS";
 }
 
-export default function CandidateCard({ candidate }: CandidateCardProps) {
+export default function CandidateCard({ candidate, activeFilter = "ALL" }: CandidateCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const hasBet = candidate.picks.some((p) => p.decision === "BET");
+
+  // Filtrado de picks a mostrar según la pestaña seleccionada
+  const displayedPicks = candidate.picks.filter((p) => {
+    if (activeFilter === "BET") return p.decision === "BET";
+    if (activeFilter === "GOALS") return p.market === "GOALS_OU";
+    if (activeFilter === "CORNERS") return p.market === "CORNERS_OU";
+    return true;
+  });
 
   return (
     <div
@@ -66,9 +75,9 @@ export default function CandidateCard({ candidate }: CandidateCardProps) {
         </div>
       </div>
 
-      {/* Lista de Pronósticos (Goles & Córneres) */}
+      {/* Lista de Pronósticos (Filtrados por la Pestaña Activa) */}
       <div className="space-y-4 mb-4">
-        {candidate.picks.map((pick, idx) => (
+        {displayedPicks.map((pick, idx) => (
           <div
             key={idx}
             className={`p-4 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-all ${
@@ -81,14 +90,14 @@ export default function CandidateCard({ candidate }: CandidateCardProps) {
               <div
                 className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black shadow-md border ${
                   pick.market === "GOALS_OU"
-                    ? "bg-gradient-to-br from-[#004D98] to-[#002f60] text-white border-blue-400/30"
-                    : "bg-gradient-to-br from-[#A50044] to-[#600027] text-white border-rose-400/30"
+                    ? "bg-gradient-to-br from-[#004D98] to-[#002f60] text-[#EDBB00] border-blue-400/30"
+                    : "bg-gradient-to-br from-[#A50044] to-[#600027] text-[#EDBB00] border-rose-400/30"
                 }`}
               >
                 {pick.market === "GOALS_OU" ? (
-                  <IoFootball className="w-6 h-6 text-white" />
+                  <IoFootball className="w-6 h-6" />
                 ) : (
-                  <IoFlag className="w-6 h-6 text-[#EDBB00]" />
+                  <IoFlag className="w-6 h-6" />
                 )}
               </div>
 
@@ -132,6 +141,12 @@ export default function CandidateCard({ candidate }: CandidateCardProps) {
             </div>
           </div>
         ))}
+
+        {displayedPicks.length === 0 && (
+          <div className="p-4 rounded-xl bg-slate-900/30 border border-slate-800/40 text-center text-xs text-slate-400">
+            No hay selecciones en este partido bajo el filtro actual.
+          </div>
+        )}
       </div>
 
       {/* Botón para expandir detalles técnicos */}
@@ -146,7 +161,7 @@ export default function CandidateCard({ candidate }: CandidateCardProps) {
       {/* Detalles desplegables */}
       {expanded && (
         <div className="mt-4 p-4 rounded-2xl bg-slate-950/90 border border-slate-800/80 text-xs space-y-3 font-mono backdrop-blur-lg">
-          {candidate.picks.map((p, i) => (
+          {displayedPicks.map((p, i) => (
             <div key={i} className="border-b border-slate-800/60 pb-2.5 last:border-0">
               <div className="text-slate-200 font-bold mb-1 flex items-center gap-1.5">
                 <span className="text-[#EDBB00]">▶</span> {p.market} {p.selection} {p.line} Reasoning:

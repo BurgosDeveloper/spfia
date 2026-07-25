@@ -8,7 +8,6 @@ import { CandidateResult } from "@/lib/predictorEngine";
 import {
   IoPlay,
   IoCalendarOutline,
-  IoFilter,
   IoRefreshOutline,
   IoTrophyOutline,
   IoSparkles,
@@ -82,7 +81,12 @@ export default function Home() {
     }
   };
 
-  // Filtrado de candidatos
+  // Conteos exactos dinámicos por categoría
+  const countBetMatches = candidates.filter((c) => c.picks.some((p) => p.decision === "BET")).length;
+  const countGoalsMatches = candidates.filter((c) => c.picks.some((p) => p.market === "GOALS_OU")).length;
+  const countCornersMatches = candidates.filter((c) => c.picks.some((p) => p.market === "CORNERS_OU")).length;
+
+  // Filtrado de partidos a renderizar según pestaña activa
   const filteredCandidates = candidates.filter((c) => {
     if (activeFilter === "BET") {
       return c.picks.some((p) => p.decision === "BET");
@@ -195,13 +199,13 @@ export default function Home() {
               </span>
             </div>
 
-            {/* Tabs Filtro */}
+            {/* Tabs Filtro Interactivo */}
             <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-slate-950/80 border border-slate-800 backdrop-blur-md">
               <button
                 onClick={() => setActiveFilter("ALL")}
                 className={`px-3.5 py-1.5 text-xs font-black rounded-xl transition-all ${
                   activeFilter === "ALL"
-                    ? "bg-[#004D98] text-white shadow-md"
+                    ? "bg-[#004D98] text-white shadow-md border border-blue-400/40"
                     : "text-slate-400 hover:text-white"
                 }`}
               >
@@ -211,31 +215,31 @@ export default function Home() {
                 onClick={() => setActiveFilter("BET")}
                 className={`px-3.5 py-1.5 text-xs font-black rounded-xl transition-all ${
                   activeFilter === "BET"
-                    ? "bg-[#EDBB00] text-[#07090e] shadow-md"
+                    ? "bg-[#EDBB00] text-[#07090e] shadow-md border border-yellow-300"
                     : "text-slate-400 hover:text-white"
                 }`}
               >
-                Solo BET
+                Solo BET ({countBetMatches})
               </button>
               <button
                 onClick={() => setActiveFilter("GOALS")}
                 className={`px-3.5 py-1.5 text-xs font-black rounded-xl transition-all ${
                   activeFilter === "GOALS"
-                    ? "bg-[#A50044] text-white shadow-md"
+                    ? "bg-[#A50044] text-white shadow-md border border-rose-400/40"
                     : "text-slate-400 hover:text-white"
                 }`}
               >
-                Goles (1.5/2.5)
+                Goles ({countGoalsMatches})
               </button>
               <button
                 onClick={() => setActiveFilter("CORNERS")}
                 className={`px-3.5 py-1.5 text-xs font-black rounded-xl transition-all ${
                   activeFilter === "CORNERS"
-                    ? "bg-purple-600 text-white shadow-md"
+                    ? "bg-purple-600 text-white shadow-md border border-purple-400/40"
                     : "text-slate-400 hover:text-white"
                 }`}
               >
-                Córneres (6.5/7.5)
+                Córneres ({countCornersMatches})
               </button>
             </div>
           </div>
@@ -243,9 +247,19 @@ export default function Home() {
           {/* Cards Grid */}
           <div className="grid grid-cols-1 gap-6">
             {filteredCandidates.map((candidate) => (
-              <CandidateCard key={candidate.fixtureId} candidate={candidate} />
+              <CandidateCard
+                key={candidate.fixtureId}
+                candidate={candidate}
+                activeFilter={activeFilter}
+              />
             ))}
           </div>
+
+          {filteredCandidates.length === 0 && (
+            <div className="clay-glass-card p-8 text-center text-slate-400 text-sm">
+              No hay partidos que coincidan con la pestaña seleccionada en esta jornada.
+            </div>
+          )}
         </section>
       )}
 
