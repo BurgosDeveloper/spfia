@@ -3,33 +3,47 @@ import { MatchFixture, SUPPORTED_LEAGUES } from "./footballData";
 
 export interface LineupStatus {
   status: "CONFIRMED" | "AVAILABLE_PARTIAL" | "NOT_AVAILABLE";
-  confidence: number; // 1.0 para CONFIRMED, 0.96 para PARTIAL, 0.92 para NOT_AVAILABLE
+  confidence: number;
   homeStartXiCount: number;
   awayStartXiCount: number;
 }
 
-export interface TeamCornerStats {
+export interface TeamSeasonStats {
+  teamId: number;
   teamName: string;
-  avgCornersEarnedHome: number;
-  avgCornersConcededHome: number;
-  avgCornersEarnedAway: number;
-  avgCornersConcededAway: number;
-  overallAvgCorners: number;
+  played: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalsForPerGame: number;
+  goalsAgainstPerGame: number;
 }
 
 const API_KEY = process.env.API_FOOTBALL_DATA_TOKEN || "f10f4374d9c89e9218f7e716912251af";
 const BASE_URL = "https://v3.football.api-sports.io";
 
 export const API_FOOTBALL_LEAGUE_IDS: Record<string, number> = {
-  PD: 140,  // LaLiga Primera España
-  SD: 141,  // LaLiga Segunda Hypermotion España
-  PL: 39,   // Premier League Inglaterra
-  ELC: 40,  // Championship Inglaterra
-  FL1: 61,  // Ligue 1 Francia
-  SA: 135,  // Serie A Italia
-  BL1: 78,  // Bundesliga Alemania
-  BSA: 71,  // Brasileirao Serie A Brasil
-  LPF: 128, // Liga Profesional Primera División Argentina
+  PD: 140,
+  SD: 141,
+  PL: 39,
+  ELC: 40,
+  FL1: 61,
+  SA: 135,
+  BL1: 78,
+  BSA: 71,
+  LPF: 128,
+};
+
+// Promedios históricos calibrados de córneres por liga (HOME, AWAY)
+const LEAGUE_CORNER_BASELINES: Record<string, { avgHome: number; avgAway: number }> = {
+  PL:  { avgHome: 5.6, avgAway: 4.8 },
+  PD:  { avgHome: 5.1, avgAway: 4.5 },
+  SD:  { avgHome: 5.3, avgAway: 4.5 },
+  BL1: { avgHome: 5.4, avgAway: 4.7 },
+  SA:  { avgHome: 5.2, avgAway: 4.6 },
+  FL1: { avgHome: 5.0, avgAway: 4.5 },
+  ELC: { avgHome: 5.7, avgAway: 4.8 },
+  BSA: { avgHome: 5.5, avgAway: 4.7 },
+  LPF: { avgHome: 5.0, avgAway: 4.4 },
 };
 
 function getHeaders() {
@@ -39,9 +53,6 @@ function getHeaders() {
   };
 }
 
-/**
- * Normaliza nombres de equipos para hacer matching con API-Football.
- */
 function normTeamName(name: string): string {
   return name
     .toLowerCase()
@@ -54,9 +65,164 @@ function normTeamName(name: string): string {
 }
 
 /**
- * Consulta de partidos desde API-Football (api-sports.io)
- * Aplica una Ventana de Tiempo por Jornada Local (05:00 UTC del día actual a 04:59 UTC del día siguiente)
- * para corregir desfasajes huso horario y capturar los partidos exactos de la jornada.
+ * Obtiene las estadísticas de la temporada actual de un equipo desde API-Football.
+ * Devuelve goles a favor/en contra por partido, partidos jugados, etc.
+ */
+export async function fetchTeamSeasonStats(
+  teamId: number,
+  leagueCode: string
+): Promise<TeamSeasonStats | null> {
+  const leagueId = API_FOOTBALL_LEAGUE_IDS[leagueCode];
+  if (!leagueId || !API_KEY) return null;
+
+  const cacheKey = `apif:teamstats:v2:${leagueId}:${teamId}`;
+  const cached = await getCachedData<TeamSeasonStats>(cacheKey);
+  if (cached) return cached;
+
+  // Free plan only allows seasons 2022-2024, try from most recent backwards
+  const seasonsToTry = [2024, 2023, 2022];
+
+  try {
+    for (const season of seasonsToTry) {
+      const url = `${BASE_URL}/teams/statistics?team=${teamId}&league=${leagueId}&season=${season}`;
+      const res = await fetch(url, { headers: getHeaders(), cache: "no-store" });
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      // Check for API error response (plan restriction)
+      if (data.errors && Object.keys(data.errors).length > 0) continue;
+
+      const result = await parseTeamStats(data, teamId, cacheKey);
+      if (result) return result;
+    }
+    return null;
+  } catch (err) {
+    console.error(`Error fetching team stats for ${teamId}:`, err);
+    return null;
+  }
+}
+
+async function parseTeamStats(data: any, teamId: number, cacheKey: string): Promise<TeamSeasonStats | null> {
+  const resp = data.response;
+  if (!resp || !resp.fixtures || !resp.goals) return null;
+
+  const played = (resp.fixtures?.played?.total) || 0;
+  if (played === 0) return null;
+
+  const goalsFor = (resp.goals?.for?.total?.total) || 0;
+  const goalsAgainst = (resp.goals?.against?.total?.total) || 0;
+
+  const stats: TeamSeasonStats = {
+    teamId,
+    teamName: resp.team?.name || "",
+    played,
+    goalsFor,
+    goalsAgainst,
+    goalsForPerGame: goalsFor / played,
+    goalsAgainstPerGame: goalsAgainst / played,
+  };
+
+  await setCachedData(cacheKey, stats, 86400); // Cache 24h
+  return stats;
+}
+
+/**
+ * Obtiene los últimos N partidos de un equipo con estadísticas de corners.
+ * Devuelve promedio de corners a favor y en contra real.
+ */
+export async function fetchTeamCornerStats(
+  teamId: number,
+  leagueCode: string
+): Promise<{ cornersFor: number; cornersAgainst: number; matchCount: number } | null> {
+  const leagueId = API_FOOTBALL_LEAGUE_IDS[leagueCode];
+  if (!leagueId || !API_KEY) return null;
+
+  const cacheKey = `apif:corners:v2:${leagueId}:${teamId}`;
+  const cached = await getCachedData<{ cornersFor: number; cornersAgainst: number; matchCount: number }>(cacheKey);
+  if (cached) return cached;
+
+  const seasonsToTry = [2024, 2023];
+
+  try {
+    let fixtures: any[] = [];
+
+    for (const season of seasonsToTry) {
+      const url = `${BASE_URL}/fixtures?team=${teamId}&league=${leagueId}&season=${season}&last=10`;
+      const res = await fetch(url, { headers: getHeaders(), cache: "no-store" });
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      if (data.errors && Object.keys(data.errors).length > 0) continue;
+
+      fixtures = data.response || [];
+      if (fixtures.length > 0) break;
+    }
+
+    if (fixtures.length === 0) return null;
+
+    // Obtener estadísticas de corners por partido
+    let totalCornersFor = 0;
+    let totalCornersAgainst = 0;
+    let matchesWithCorners = 0;
+
+    for (const fix of fixtures.slice(0, 8)) {
+      const fixId = fix.fixture?.id;
+      if (!fixId) continue;
+
+      const statsUrl = `${BASE_URL}/fixtures/statistics?fixture=${fixId}`;
+      const statsRes = await fetch(statsUrl, { headers: getHeaders(), cache: "no-store" });
+      if (!statsRes.ok) continue;
+
+      const statsData = await statsRes.json();
+      const statsList = statsData.response || [];
+
+      for (const teamStats of statsList) {
+        const tId = teamStats.team?.id;
+        const stats = teamStats.statistics || [];
+        const cornerStat = stats.find((s: any) => s.type === "Corner Kicks");
+        const corners = cornerStat?.value || 0;
+
+        if (tId === teamId) {
+          totalCornersFor += corners;
+        } else {
+          totalCornersAgainst += corners;
+        }
+      }
+      matchesWithCorners++;
+    }
+
+    if (matchesWithCorners === 0) return null;
+
+    const result = {
+      cornersFor: totalCornersFor / matchesWithCorners,
+      cornersAgainst: totalCornersAgainst / matchesWithCorners,
+      matchCount: matchesWithCorners,
+    };
+
+    await setCachedData(cacheKey, result, 86400); // Cache 24h
+    return result;
+  } catch (err) {
+    console.error(`Error fetching corner stats for team ${teamId}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Obtiene promedios de córneres por liga (baseline usado si las stats por equipo no están disponibles).
+ */
+export function getDefaultCornerStatsForLeague(leagueCode: string): {
+  avgCornersHome: number;
+  avgCornersAway: number;
+} {
+  const baseline = LEAGUE_CORNER_BASELINES[leagueCode];
+  return baseline
+    ? { avgCornersHome: baseline.avgHome, avgCornersAway: baseline.avgAway }
+    : { avgCornersHome: 5.2, avgCornersAway: 4.5 };
+}
+
+/**
+ * Consulta de partidos desde API-Football (api-sports.io).
+ * Aplica Ventana de Tiempo por Jornada Local.
  */
 export async function fetchMatchesFromApiFootball(
   dateStr: string,
@@ -72,17 +238,14 @@ export async function fetchMatchesFromApiFootball(
   const leagueInfo = SUPPORTED_LEAGUES[leagueCode];
   const targetCode = leagueCode.toUpperCase();
 
-  // Calcular la fecha del día siguiente
   const currDateObj = new Date(dateStr + "T00:00:00Z");
   const nextDateObj = new Date(currDateObj.getTime() + 86400000);
   const nextDateStr = nextDateObj.toISOString().split("T")[0];
 
-  // Definir la ventana exacta de la jornada local en UTC
   const windowStart = new Date(dateStr + "T05:00:00Z").getTime();
   const windowEnd = new Date(nextDateStr + "T04:59:59Z").getTime();
 
   try {
-    // Consultar día actual y día siguiente para cubrir partidos nocturnos de la jornada
     const [resCurr, resNext] = await Promise.all([
       fetch(`${BASE_URL}/fixtures?date=${dateStr}`, { headers: getHeaders(), cache: "no-store" }),
       fetch(`${BASE_URL}/fixtures?date=${nextDateStr}`, { headers: getHeaders(), cache: "no-store" }),
@@ -103,46 +266,28 @@ export async function fetchMatchesFromApiFootball(
     for (const item of responseList) {
       const fLeague = item.league || {};
       const fLeagueId = fLeague.id;
-      const fCountry = (fLeague.country || "").toLowerCase();
       const fName = (fLeague.name || "").toLowerCase();
+      const fCountry = (fLeague.country || "").toLowerCase();
       const fDate = item.fixture?.date || "";
 
-      // Excluir ligas de reservas o juveniles
-      if (fName.includes("reserve") || fName.includes("u20") || fName.includes("u21") || fName.includes("u19")) {
-        continue;
-      }
+      if (fName.includes("reserve") || fName.includes("u20") || fName.includes("u21") || fName.includes("u19")) continue;
 
-      // Validar ventana de tiempo de la jornada local
       const fixtureTime = new Date(fDate).getTime();
-      if (fixtureTime < windowStart || fixtureTime > windowEnd) {
-        continue;
-      }
+      if (fixtureTime < windowStart || fixtureTime > windowEnd) continue;
 
       let isMatch = false;
-
-      // Coincidencia por ID de Liga directo o coincidencia secundaria
       if (targetLeagueId && fLeagueId === targetLeagueId) {
         isMatch = true;
       } else {
-        if (targetCode === "LPF" && (fCountry === "argentina" && (fName.includes("liga profesional") || fName.includes("primera")))) {
-          isMatch = true;
-        } else if (targetCode === "SD" && fCountry === "spain" && (fName.includes("segunda") || fName.includes("hypermotion"))) {
-          isMatch = true;
-        } else if (targetCode === "PD" && fCountry === "spain" && (fName.includes("primera") || fName.includes("la liga"))) {
-          isMatch = true;
-        } else if (targetCode === "PL" && fCountry === "england" && fName.includes("premier")) {
-          isMatch = true;
-        } else if (targetCode === "ELC" && fCountry === "england" && fName.includes("championship")) {
-          isMatch = true;
-        } else if (targetCode === "FL1" && fCountry === "france" && fName.includes("ligue 1")) {
-          isMatch = true;
-        } else if (targetCode === "SA" && fCountry === "italy" && fName.includes("serie a")) {
-          isMatch = true;
-        } else if (targetCode === "BL1" && fCountry === "germany" && fName.includes("bundesliga")) {
-          isMatch = true;
-        } else if (targetCode === "BSA" && fCountry === "brazil" && fName.includes("serie a")) {
-          isMatch = true;
-        }
+        if (targetCode === "LPF" && fCountry === "argentina" && (fName.includes("liga profesional") || fName.includes("primera"))) isMatch = true;
+        else if (targetCode === "SD" && fCountry === "spain" && (fName.includes("segunda") || fName.includes("hypermotion"))) isMatch = true;
+        else if (targetCode === "PD" && fCountry === "spain" && (fName.includes("primera") || fName.includes("la liga"))) isMatch = true;
+        else if (targetCode === "PL" && fCountry === "england" && fName.includes("premier")) isMatch = true;
+        else if (targetCode === "ELC" && fCountry === "england" && fName.includes("championship")) isMatch = true;
+        else if (targetCode === "FL1" && fCountry === "france" && fName.includes("ligue 1")) isMatch = true;
+        else if (targetCode === "SA" && fCountry === "italy" && fName.includes("serie a")) isMatch = true;
+        else if (targetCode === "BL1" && fCountry === "germany" && fName.includes("bundesliga")) isMatch = true;
+        else if (targetCode === "BSA" && fCountry === "brazil" && fName.includes("serie a")) isMatch = true;
       }
 
       if (isMatch && !matchesMap.has(item.fixture.id)) {
@@ -156,17 +301,14 @@ export async function fetchMatchesFromApiFootball(
           homeTeam: { id: item.teams.home.id, name: item.teams.home.name },
           awayTeam: { id: item.teams.away.id, name: item.teams.away.name },
           score: {
-            fullTime: {
-              home: item.goals.home,
-              away: item.goals.away,
-            },
+            fullTime: { home: item.goals.home, away: item.goals.away },
           },
         });
       }
     }
 
     const matches = Array.from(matchesMap.values());
-    await setCachedData(cacheKey, matches, 21600); // 6 horas de caché
+    await setCachedData(cacheKey, matches, 21600);
     return matches;
   } catch (err) {
     console.error(`Error en API-Football para ${leagueCode}:`, err);
@@ -175,7 +317,7 @@ export async function fetchMatchesFromApiFootball(
 }
 
 /**
- * Consulta alineaciones pre-partido si el token está activo.
+ * Consulta alineaciones pre-partido.
  */
 export async function fetchLineupsForMatch(
   dateStr: string,
@@ -194,13 +336,9 @@ export async function fetchLineupsForMatch(
   }
 
   try {
-    // 1. Buscar fixture ID
     const searchUrl = `${BASE_URL}/fixtures?date=${dateStr}&search=${encodeURIComponent(homeTeam.split(" ")[0])}`;
     const resSearch = await fetch(searchUrl, { headers: getHeaders(), cache: "no-store" });
-    
-    if (!resSearch.ok) {
-      return { status: "NOT_AVAILABLE", confidence: 0.92, homeStartXiCount: 0, awayStartXiCount: 0 };
-    }
+    if (!resSearch.ok) return { status: "NOT_AVAILABLE", confidence: 0.92, homeStartXiCount: 0, awayStartXiCount: 0 };
 
     const searchData = await resSearch.json();
     const fixtures = searchData.response || [];
@@ -224,7 +362,6 @@ export async function fetchLineupsForMatch(
       return fallback;
     }
 
-    // 2. Obtener lineups
     const lineupsUrl = `${BASE_URL}/fixtures/lineups?fixture=${fixtureId}`;
     const resLineups = await fetch(lineupsUrl, { headers: getHeaders(), cache: "no-store" });
     if (!resLineups.ok) {
@@ -238,7 +375,6 @@ export async function fetchLineupsForMatch(
 
     let homeXi = 0;
     let awayXi = 0;
-
     if (lineupList.length >= 2) {
       homeXi = lineupList[0]?.startXI?.length || 0;
       awayXi = lineupList[1]?.startXI?.length || 0;
@@ -246,57 +382,14 @@ export async function fetchLineupsForMatch(
 
     let status: "CONFIRMED" | "AVAILABLE_PARTIAL" | "NOT_AVAILABLE" = "NOT_AVAILABLE";
     let confidence = 0.92;
+    if (homeXi === 11 && awayXi === 11) { status = "CONFIRMED"; confidence = 1.0; }
+    else if (homeXi > 0 || awayXi > 0) { status = "AVAILABLE_PARTIAL"; confidence = 0.96; }
 
-    if (homeXi === 11 && awayXi === 11) {
-      status = "CONFIRMED";
-      confidence = 1.0;
-    } else if (homeXi > 0 || awayXi > 0) {
-      status = "AVAILABLE_PARTIAL";
-      confidence = 0.96;
-    }
-
-    const result: LineupStatus = {
-      status,
-      confidence,
-      homeStartXiCount: homeXi,
-      awayStartXiCount: awayXi,
-    };
-
+    const result: LineupStatus = { status, confidence, homeStartXiCount: homeXi, awayStartXiCount: awayXi };
     await setCachedData(cacheKey, result, status === "CONFIRMED" ? 86400 : 900);
     return result;
   } catch (err) {
     console.error("Error consultando alineaciones en API-Football:", err);
     return { status: "NOT_AVAILABLE", confidence: 0.92, homeStartXiCount: 0, awayStartXiCount: 0 };
-  }
-}
-
-/**
- * Obtiene promedios de córneres por liga y equipo (o usa promedios históricos calibrados por liga).
- */
-export function getDefaultCornerStatsForLeague(leagueCode: string): {
-  avgCornersHome: number;
-  avgCornersAway: number;
-} {
-  switch (leagueCode) {
-    case "PL": // Premier League (~10.4 córneres/partido)
-      return { avgCornersHome: 5.6, avgCornersAway: 4.8 };
-    case "PD": // LaLiga España (~9.6 córneres/partido)
-      return { avgCornersHome: 5.1, avgCornersAway: 4.5 };
-    case "SD": // LaLiga Segunda (~9.8 córneres/partido)
-      return { avgCornersHome: 5.3, avgCornersAway: 4.5 };
-    case "BL1": // Bundesliga (~10.1 córneres/partido)
-      return { avgCornersHome: 5.4, avgCornersAway: 4.7 };
-    case "SA": // Serie A Italia (~9.8 córneres/partido)
-      return { avgCornersHome: 5.2, avgCornersAway: 4.6 };
-    case "FL1": // Ligue 1 Francia (~9.5 córneres/partido)
-      return { avgCornersHome: 5.0, avgCornersAway: 4.5 };
-    case "ELC": // Championship (~10.5 córneres/partido)
-      return { avgCornersHome: 5.7, avgCornersAway: 4.8 };
-    case "BSA": // Brasil Serie A (~10.2 córneres/partido)
-      return { avgCornersHome: 5.5, avgCornersAway: 4.7 };
-    case "LPF": // Argentina Primera (~9.4 córneres/partido)
-      return { avgCornersHome: 5.0, avgCornersAway: 4.4 };
-    default:
-      return { avgCornersHome: 5.2, avgCornersAway: 4.5 };
   }
 }
