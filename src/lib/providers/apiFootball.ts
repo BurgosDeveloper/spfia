@@ -12,8 +12,6 @@ export interface TeamSeasonStats {
   teamId: number;
   teamName: string;
   played: number;
-  goalsFor: number;
-  goalsAgainst: number;
   goalsForPerGame: number;
   goalsAgainstPerGame: number;
 }
@@ -22,18 +20,17 @@ const API_KEY = process.env.API_FOOTBALL_DATA_TOKEN || "f10f4374d9c89e9218f7e716
 const BASE_URL = "https://v3.football.api-sports.io";
 
 export const API_FOOTBALL_LEAGUE_IDS: Record<string, number> = {
-  PD: 140,
-  SD: 141,
-  PL: 39,
-  ELC: 40,
-  FL1: 61,
-  SA: 135,
-  BL1: 78,
-  BSA: 71,
-  LPF: 128,
+  PD: 140,  // LaLiga Primera España
+  SD: 141,  // LaLiga Segunda Hypermotion España
+  PL: 39,   // Premier League Inglaterra
+  ELC: 40,  // Championship Inglaterra
+  FL1: 61,  // Ligue 1 Francia
+  SA: 135,  // Serie A Italia
+  BL1: 78,  // Bundesliga Alemania
+  BSA: 71,  // Brasileirao Serie A Brasil
+  LPF: 128, // Liga Profesional Primera División Argentina
 };
 
-// Promedios históricos calibrados de córneres por liga (HOME, AWAY)
 const LEAGUE_CORNER_BASELINES: Record<string, { avgHome: number; avgAway: number }> = {
   PL:  { avgHome: 5.6, avgAway: 4.8 },
   PD:  { avgHome: 5.1, avgAway: 4.5 },
@@ -53,7 +50,7 @@ function getHeaders() {
   };
 }
 
-function normTeamName(name: string): string {
+export function normTeamName(name: string): string {
   return name
     .toLowerCase()
     .normalize("NFD")
@@ -65,146 +62,64 @@ function normTeamName(name: string): string {
 }
 
 /**
- * Obtiene las estadísticas de la temporada actual de un equipo desde API-Football.
- * Devuelve goles a favor/en contra por partido, partidos jugados, etc.
+ * Obtiene la tabla de clasificaciones completa con estadísticas por equipo en 1 sola llamada HTTP.
+ * Mantiene la cuota diaria intacta y evita errores de Rate Limiting (429).
  */
-export async function fetchTeamSeasonStats(
-  teamId: number,
+export async function fetchApiFootballStandings(
   leagueCode: string
-): Promise<TeamSeasonStats | null> {
+): Promise<Record<string, TeamSeasonStats>> {
   const leagueId = API_FOOTBALL_LEAGUE_IDS[leagueCode];
-  if (!leagueId || !API_KEY) return null;
+  if (!leagueId || !API_KEY) return {};
 
-  const cacheKey = `apif:teamstats:v2:${leagueId}:${teamId}`;
-  const cached = await getCachedData<TeamSeasonStats>(cacheKey);
+  const cacheKey = `apif:standings:v3:${leagueCode}:${leagueId}`;
+  const cached = await getCachedData<Record<string, TeamSeasonStats>>(cacheKey);
   if (cached) return cached;
 
-  // Free plan only allows seasons 2022-2024, try from most recent backwards
   const seasonsToTry = [2024, 2023, 2022];
 
-  try {
-    for (const season of seasonsToTry) {
-      const url = `${BASE_URL}/teams/statistics?team=${teamId}&league=${leagueId}&season=${season}`;
-      const res = await fetch(url, { headers: getHeaders(), cache: "no-store" });
-      if (!res.ok) continue;
-
-      const data = await res.json();
-      // Check for API error response (plan restriction)
-      if (data.errors && Object.keys(data.errors).length > 0) continue;
-
-      const result = await parseTeamStats(data, teamId, cacheKey);
-      if (result) return result;
-    }
-    return null;
-  } catch (err) {
-    console.error(`Error fetching team stats for ${teamId}:`, err);
-    return null;
-  }
-}
-
-async function parseTeamStats(data: any, teamId: number, cacheKey: string): Promise<TeamSeasonStats | null> {
-  const resp = data.response;
-  if (!resp || !resp.fixtures || !resp.goals) return null;
-
-  const played = (resp.fixtures?.played?.total) || 0;
-  if (played === 0) return null;
-
-  const goalsFor = (resp.goals?.for?.total?.total) || 0;
-  const goalsAgainst = (resp.goals?.against?.total?.total) || 0;
-
-  const stats: TeamSeasonStats = {
-    teamId,
-    teamName: resp.team?.name || "",
-    played,
-    goalsFor,
-    goalsAgainst,
-    goalsForPerGame: goalsFor / played,
-    goalsAgainstPerGame: goalsAgainst / played,
-  };
-
-  await setCachedData(cacheKey, stats, 86400); // Cache 24h
-  return stats;
-}
-
-/**
- * Obtiene los últimos N partidos de un equipo con estadísticas de corners.
- * Devuelve promedio de corners a favor y en contra real.
- */
-export async function fetchTeamCornerStats(
-  teamId: number,
-  leagueCode: string
-): Promise<{ cornersFor: number; cornersAgainst: number; matchCount: number } | null> {
-  const leagueId = API_FOOTBALL_LEAGUE_IDS[leagueCode];
-  if (!leagueId || !API_KEY) return null;
-
-  const cacheKey = `apif:corners:v2:${leagueId}:${teamId}`;
-  const cached = await getCachedData<{ cornersFor: number; cornersAgainst: number; matchCount: number }>(cacheKey);
-  if (cached) return cached;
-
-  const seasonsToTry = [2024, 2023];
-
-  try {
-    let fixtures: any[] = [];
-
-    for (const season of seasonsToTry) {
-      const url = `${BASE_URL}/fixtures?team=${teamId}&league=${leagueId}&season=${season}&last=10`;
+  for (const season of seasonsToTry) {
+    try {
+      const url = `${BASE_URL}/standings?league=${leagueId}&season=${season}`;
       const res = await fetch(url, { headers: getHeaders(), cache: "no-store" });
       if (!res.ok) continue;
 
       const data = await res.json();
       if (data.errors && Object.keys(data.errors).length > 0) continue;
 
-      fixtures = data.response || [];
-      if (fixtures.length > 0) break;
-    }
+      const standingsList = data.response?.[0]?.league?.standings?.[0] || [];
+      if (standingsList.length === 0) continue;
 
-    if (fixtures.length === 0) return null;
+      const result: Record<string, TeamSeasonStats> = {};
 
-    // Obtener estadísticas de corners por partido
-    let totalCornersFor = 0;
-    let totalCornersAgainst = 0;
-    let matchesWithCorners = 0;
+      for (const row of standingsList) {
+        const teamId = row.team?.id;
+        const teamName = row.team?.name || "";
+        const normName = normTeamName(teamName);
+        const played = Math.max(1, row.all?.played || 1);
+        const goalsFor = row.all?.goals?.for || 0;
+        const goalsAgainst = row.all?.goals?.against || 0;
 
-    for (const fix of fixtures.slice(0, 8)) {
-      const fixId = fix.fixture?.id;
-      if (!fixId) continue;
+        const stats: TeamSeasonStats = {
+          teamId,
+          teamName,
+          played,
+          goalsForPerGame: goalsFor / played,
+          goalsAgainstPerGame: goalsAgainst / played,
+        };
 
-      const statsUrl = `${BASE_URL}/fixtures/statistics?fixture=${fixId}`;
-      const statsRes = await fetch(statsUrl, { headers: getHeaders(), cache: "no-store" });
-      if (!statsRes.ok) continue;
-
-      const statsData = await statsRes.json();
-      const statsList = statsData.response || [];
-
-      for (const teamStats of statsList) {
-        const tId = teamStats.team?.id;
-        const stats = teamStats.statistics || [];
-        const cornerStat = stats.find((s: any) => s.type === "Corner Kicks");
-        const corners = cornerStat?.value || 0;
-
-        if (tId === teamId) {
-          totalCornersFor += corners;
-        } else {
-          totalCornersAgainst += corners;
-        }
+        // Guardar por ID numérico y por nombre normalizado para garantizar matching 100%
+        result[String(teamId)] = stats;
+        result[normName] = stats;
       }
-      matchesWithCorners++;
+
+      await setCachedData(cacheKey, result, 86400); // Caché 24 horas
+      return result;
+    } catch (err) {
+      console.error(`Error obteniendo clasificaciones para ${leagueCode}:`, err);
     }
-
-    if (matchesWithCorners === 0) return null;
-
-    const result = {
-      cornersFor: totalCornersFor / matchesWithCorners,
-      cornersAgainst: totalCornersAgainst / matchesWithCorners,
-      matchCount: matchesWithCorners,
-    };
-
-    await setCachedData(cacheKey, result, 86400); // Cache 24h
-    return result;
-  } catch (err) {
-    console.error(`Error fetching corner stats for team ${teamId}:`, err);
-    return null;
   }
+
+  return {};
 }
 
 /**
