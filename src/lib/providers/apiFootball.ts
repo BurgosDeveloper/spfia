@@ -191,11 +191,27 @@ export async function fetchMatchesFromApiFootball(
       if (fixtureTime < windowStart || fixtureTime > windowEnd) continue;
 
       let isMatch = false;
-      if (targetLeagueId && fLeagueId === targetLeagueId) {
-        isMatch = true;
-      } else {
-        if (targetCode === "LPF" && fCountry === "argentina" && (fName.includes("liga profesional") || fName.includes("primera"))) isMatch = true;
-        else if (targetCode === "SD" && fCountry === "spain" && (fName.includes("segunda") || fName.includes("hypermotion"))) isMatch = true;
+      if (fLeagueId && targetLeagueId) {
+        // Validación estricta por ID oficial de liga (ej. 128 para LPF Liga Profesional Argentina)
+        isMatch = fLeagueId === targetLeagueId;
+      } else if (!fLeagueId && targetCode === "LPF" && fCountry === "argentina") {
+        // Fallback únicamente cuando la API no devuelve ID de liga
+        const isExcluded =
+          fName.includes("primera b") ||
+          fName.includes("primera c") ||
+          fName.includes("primera d") ||
+          fName.includes("nacional") ||
+          fName.includes("metropolitana") ||
+          fName.includes("federal") ||
+          fName.includes("copa") ||
+          fName.includes("reserve") ||
+          fName.includes("women") ||
+          fName.includes("femenino");
+        if (!isExcluded && (fName === "liga profesional argentina" || fName === "primera división" || fName.includes("liga profesional"))) {
+          isMatch = true;
+        }
+      } else if (!fLeagueId) {
+        if (targetCode === "SD" && fCountry === "spain" && (fName.includes("segunda") || fName.includes("hypermotion"))) isMatch = true;
         else if (targetCode === "PD" && fCountry === "spain" && (fName.includes("primera") || fName.includes("la liga"))) isMatch = true;
         else if (targetCode === "PL" && fCountry === "england" && fName.includes("premier")) isMatch = true;
         else if (targetCode === "ELC" && fCountry === "england" && fName.includes("championship")) isMatch = true;

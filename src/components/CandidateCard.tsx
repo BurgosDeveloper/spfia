@@ -119,7 +119,7 @@ export default function CandidateCard({ candidate, activeFilter = "ALL" }: Candi
                     Lím. Inf ($P_{"{low}"}$): <strong className="text-[#EDBB00] font-black">{(pick.pLower * 100).toFixed(1)}%</strong>
                   </span>
                   <span>
-                    Estabilidad: <strong className="text-blue-300 font-bold">{(pick.stability * 100).toFixed(0)}%</strong>
+                    Estabilidad: <strong className="text-blue-300 font-bold">{(pick.stability * 100).toFixed(1)}%</strong>
                   </span>
                 </div>
               </div>
