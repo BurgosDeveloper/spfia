@@ -150,15 +150,24 @@ export async function analyzeLeagueForDate(
     const homeFd = fdStandings[m.homeTeam.id];
     const awayFd = fdStandings[m.awayTeam.id];
 
-    // Resolver métricas ofensivas/defensivas de GOLES por equipo
+    // Resolver métricas ofensivas/defensivas de GOLES por equipo usando Desglose Local/Visitante (Si existe)
     let homeGF: number, homeGA: number, homePlayed: number;
     let homeSource: string;
+    
     if (homeApi) {
-      homeGF = homeApi.goalsForPerGame;
-      homeGA = homeApi.goalsAgainstPerGame;
-      homePlayed = homeApi.played;
-      homeSource = `API-Football (${homeApi.played}PJ, GF:${homeGF.toFixed(2)}, GA:${homeGA.toFixed(2)})`;
+      // Candado 1: Sample Size Blend para Local (Mezclar global si hay pocos partidos de local)
+      homePlayed = homeApi.homePlayed;
+      if (homePlayed < 5) {
+        homeGF = (homeApi.homeGoalsForPerGame + homeApi.goalsForPerGame) / 2.0;
+        homeGA = (homeApi.homeGoalsAgainstPerGame + homeApi.goalsAgainstPerGame) / 2.0;
+        homeSource = `API-Football Blend (<5 Home PJ, GF:${homeGF.toFixed(2)}, GA:${homeGA.toFixed(2)})`;
+      } else {
+        homeGF = homeApi.homeGoalsForPerGame;
+        homeGA = homeApi.homeGoalsAgainstPerGame;
+        homeSource = `API-Football Pure Home (${homePlayed}PJ, GF:${homeGF.toFixed(2)}, GA:${homeGA.toFixed(2)})`;
+      }
     } else if (homeFd) {
+      // football-data.org solo da TOTAL en free tier, aplicamos el total
       homeGF = homeFd.goalsForPerGame;
       homeGA = homeFd.goalsAgainstPerGame;
       homePlayed = 15;
@@ -172,11 +181,19 @@ export async function analyzeLeagueForDate(
 
     let awayGF: number, awayGA: number, awayPlayed: number;
     let awaySource: string;
+    
     if (awayApi) {
-      awayGF = awayApi.goalsForPerGame;
-      awayGA = awayApi.goalsAgainstPerGame;
-      awayPlayed = awayApi.played;
-      awaySource = `API-Football (${awayApi.played}PJ, GF:${awayGF.toFixed(2)}, GA:${awayGA.toFixed(2)})`;
+      // Candado 1: Sample Size Blend para Visitante
+      awayPlayed = awayApi.awayPlayed;
+      if (awayPlayed < 5) {
+        awayGF = (awayApi.awayGoalsForPerGame + awayApi.goalsForPerGame) / 2.0;
+        awayGA = (awayApi.awayGoalsAgainstPerGame + awayApi.goalsAgainstPerGame) / 2.0;
+        awaySource = `API-Football Blend (<5 Away PJ, GF:${awayGF.toFixed(2)}, GA:${awayGA.toFixed(2)})`;
+      } else {
+        awayGF = awayApi.awayGoalsForPerGame;
+        awayGA = awayApi.awayGoalsAgainstPerGame;
+        awaySource = `API-Football Pure Away (${awayPlayed}PJ, GF:${awayGF.toFixed(2)}, GA:${awayGA.toFixed(2)})`;
+      }
     } else if (awayFd) {
       awayGF = awayFd.goalsForPerGame;
       awayGA = awayFd.goalsAgainstPerGame;
@@ -189,9 +206,11 @@ export async function analyzeLeagueForDate(
       awaySource = "Liga Promedio (Ajuste Calibrado)";
     }
 
-    // --- CÁLCULO DE LAMBDAS DE GOLES (Específicos para este partido) ---
-    const homeAdvantage = 1.05;
-    const awayAdjustment = 0.95;
+    // --- CÁLCULO DE LAMBDAS DE GOLES (Determinista) ---
+    // Si la fuente es LatAm (API-Football) ya es Local Puro y Visita Puro, así que el multiplicador 1.12 es redundante.
+    // Si la fuente es football-data (Europa), es TOTAL, por lo que aplicamos el 1.12 empírico a favor del Local.
+    const homeAdvantage = homeApi ? 1.0 : 1.12; 
+    const awayAdjustment = awayApi ? 1.0 : 0.88;
 
     const lambdaHomeGoals = Math.max(0.3, ((homeGF + awayGA) / 2.0) * homeAdvantage);
     const lambdaAwayGoals = Math.max(0.3, ((awayGF + homeGA) / 2.0) * awayAdjustment);
@@ -234,11 +253,24 @@ export async function analyzeLeagueForDate(
     const lowRisk = lowScoreRiskOver15(lambdaHomeGoals, lambdaAwayGoals);
     const passesLowScoreRisk = lowRisk.p00 <= 0.12 && lowRisk.pTotalLe1 <= 0.22;
 
+    // Candado 3: Sincronización Córner/Gol (Si el riesgo de 0-0 es alto, los córneres sufren penalización)
+    let finalCornersStability = cornersStability;
+    if (lowRisk.p00 > 0.12) {
+      finalCornersStability = Math.max(0.55, finalCornersStability - 0.08); // Penalización del 8%
+    }
+
     const picks: PickResult[] = [];
 
     // ========== EVALUACIÓN 1: GOLES OVER 1.5 Y OVER 2.5 ==========
-    const pOver15Raw = probOverDixonColes(lambdaHomeGoals, lambdaAwayGoals, 1.5);
-    const pOver25Raw = probOverDixonColes(lambdaHomeGoals, lambdaAwayGoals, 2.5);
+    let pOver15Raw = probOverDixonColes(lambdaHomeGoals, lambdaAwayGoals, 1.5);
+    let pOver25Raw = probOverDixonColes(lambdaHomeGoals, lambdaAwayGoals, 2.5);
+
+    // Candado 2: Cross-Volatility Filter (Varianza Cruzada)
+    // Si el local anota muchísimo (ej. 3.0) pero el visitante defiende perfecto (ej. 0.2)
+    if (Math.abs(homeGF - awayGA) > 1.5 || Math.abs(awayGF - homeGA) > 1.5) {
+      pOver15Raw *= 0.95; // Castigo del 5% a la probabilidad bruta
+      pOver25Raw *= 0.95;
+    }
 
     const pOver15Adj = 0.5 + (pOver15Raw - 0.5) * lineupsInfo.confidence;
     const pOver25Adj = 0.5 + (pOver25Raw - 0.5) * lineupsInfo.confidence;
@@ -297,10 +329,12 @@ export async function analyzeLeagueForDate(
     const pCorners65Adj = 0.5 + (pCorners65Raw - 0.5) * lineupsInfo.confidence;
     const pCorners75Adj = 0.5 + (pCorners75Raw - 0.5) * lineupsInfo.confidence;
 
-    const { pLower: pCorners65Lower } = calculateLowerBound(pCorners65Adj, cornersStability, lineupsInfo.confidence);
-    const { pLower: pCorners75Lower } = calculateLowerBound(pCorners75Adj, cornersStability, lineupsInfo.confidence);
+    const { pLower: pCorners65Lower } = calculateLowerBound(pCorners65Adj, finalCornersStability, lineupsInfo.confidence);
+    const { pLower: pCorners75Lower } = calculateLowerBound(pCorners75Adj, finalCornersStability, lineupsInfo.confidence);
 
     const thrCorners = 0.78;
+
+    const cornerRiskMsg = (lowRisk.p00 > 0.12) ? "⚠ Riesgo 0-0 penalizó Córneres (-8% estabilidad)" : "Riesgo de bajo marcador bajo control.";
 
     const cornersReasoning = {
       lambdaCornersHome: Number(lambdaCornersHome.toFixed(2)),
@@ -309,7 +343,8 @@ export async function analyzeLeagueForDate(
       homeTeamStats: homeSource,
       awayTeamStats: awaySource,
       lineupsStatus: lineupsInfo.status,
-      stability: cornersStability,
+      stability: finalCornersStability,
+      cornerRiskMsg,
     };
 
     if (pCorners75Lower >= thrCorners) {
@@ -317,7 +352,7 @@ export async function analyzeLeagueForDate(
         market: "CORNERS_OU", selection: "OVER", line: 7.5,
         probability: Number(pCorners75Adj.toFixed(4)),
         pLower: Number(pCorners75Lower.toFixed(4)),
-        decision: "BET", threshold: thrCorners, stability: cornersStability,
+        decision: "BET", threshold: thrCorners, stability: finalCornersStability,
         reasoning: cornersReasoning,
       });
     } else if (pCorners65Lower >= thrCorners) {
@@ -325,7 +360,7 @@ export async function analyzeLeagueForDate(
         market: "CORNERS_OU", selection: "OVER", line: 6.5,
         probability: Number(pCorners65Adj.toFixed(4)),
         pLower: Number(pCorners65Lower.toFixed(4)),
-        decision: "BET", threshold: thrCorners, stability: cornersStability,
+        decision: "BET", threshold: thrCorners, stability: finalCornersStability,
         reasoning: cornersReasoning,
       });
     } else {
@@ -333,7 +368,7 @@ export async function analyzeLeagueForDate(
         market: "CORNERS_OU", selection: "OVER", line: 6.5,
         probability: Number(pCorners65Adj.toFixed(4)),
         pLower: Number(pCorners65Lower.toFixed(4)),
-        decision: "NO_BET", threshold: thrCorners, stability: cornersStability,
+        decision: "NO_BET", threshold: thrCorners, stability: finalCornersStability,
         reasoning: {
           ...cornersReasoning,
           reason: `P_lower=${(pCorners65Lower * 100).toFixed(1)}% < umbral ${thrCorners * 100}%`,

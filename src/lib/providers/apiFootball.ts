@@ -14,6 +14,12 @@ export interface TeamSeasonStats {
   played: number;
   goalsForPerGame: number;
   goalsAgainstPerGame: number;
+  homePlayed: number;
+  homeGoalsForPerGame: number;
+  homeGoalsAgainstPerGame: number;
+  awayPlayed: number;
+  awayGoalsForPerGame: number;
+  awayGoalsAgainstPerGame: number;
 }
 
 const API_KEY = process.env.API_FOOTBALL_DATA_TOKEN || "f10f4374d9c89e9218f7e716912251af";
@@ -29,6 +35,8 @@ export const API_FOOTBALL_LEAGUE_IDS: Record<string, number> = {
   BL1: 78,  // Bundesliga Alemania
   BSA: 71,  // Brasileirao Serie A Brasil
   LPF: 128, // Liga Profesional Primera División Argentina
+  PPL: 94,  // Primeira Liga Portugal
+  DED: 91,  // Eredivisie Países Bajos
 };
 
 const LEAGUE_CORNER_BASELINES: Record<string, { avgHome: number; avgAway: number }> = {
@@ -41,6 +49,8 @@ const LEAGUE_CORNER_BASELINES: Record<string, { avgHome: number; avgAway: number
   ELC: { avgHome: 5.7, avgAway: 4.8 },
   BSA: { avgHome: 5.5, avgAway: 4.7 },
   LPF: { avgHome: 5.0, avgAway: 4.4 },
+  PPL: { avgHome: 5.5, avgAway: 4.6 },
+  DED: { avgHome: 5.7, avgAway: 4.8 },
 };
 
 function getHeaders() {
@@ -99,12 +109,26 @@ export async function fetchApiFootballStandings(
         const goalsFor = row.all?.goals?.for || 0;
         const goalsAgainst = row.all?.goals?.against || 0;
 
+        const homePlayed = Math.max(1, row.home?.played || 1);
+        const homeGoalsFor = row.home?.goals?.for || 0;
+        const homeGoalsAgainst = row.home?.goals?.against || 0;
+
+        const awayPlayed = Math.max(1, row.away?.played || 1);
+        const awayGoalsFor = row.away?.goals?.for || 0;
+        const awayGoalsAgainst = row.away?.goals?.against || 0;
+
         const stats: TeamSeasonStats = {
           teamId,
           teamName,
           played,
           goalsForPerGame: goalsFor / played,
           goalsAgainstPerGame: goalsAgainst / played,
+          homePlayed,
+          homeGoalsForPerGame: homeGoalsFor / homePlayed,
+          homeGoalsAgainstPerGame: homeGoalsAgainst / homePlayed,
+          awayPlayed,
+          awayGoalsForPerGame: awayGoalsFor / awayPlayed,
+          awayGoalsAgainstPerGame: awayGoalsAgainst / awayPlayed,
         };
 
         // Guardar por ID numérico y por nombre normalizado para garantizar matching 100%

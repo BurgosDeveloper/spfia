@@ -32,6 +32,8 @@ export const SUPPORTED_LEAGUES: Record<string, { code: string; name: string; cou
   BL1: { code: "BL1", name: "Bundesliga", country: "Alemania" },
   BSA: { code: "BSA", name: "Brasileirao Serie A", country: "Brasil" },
   LPF: { code: "LPF", name: "Liga Profesional Argentina", country: "Argentina" },
+  PPL: { code: "PPL", name: "Primeira Liga", country: "Portugal" },
+  DED: { code: "DED", name: "Eredivisie", country: "Países Bajos" },
 };
 
 const BASE_URL = "https://api.football-data.org/v4";

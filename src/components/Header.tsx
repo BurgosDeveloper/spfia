@@ -23,25 +23,17 @@ export default function Header({ onLogout }: HeaderProps) {
                 SPFIA <span className="text-[#EDBB00]">Predictor</span>
                 <IoFootball className="w-5 h-5 text-[#004D98] animate-spin-slow" />
               </h1>
-              <span className="px-2.5 py-0.5 text-[10px] font-black rounded-full bg-[#EDBB00]/20 text-[#EDBB00] border border-[#EDBB00]/40 uppercase tracking-wider backdrop-blur-md">
-                v3.0 Glass-Clay
-              </span>
             </div>
             <p className="text-xs text-slate-400 font-medium mt-0.5">
-              Goles (Over 1.5/2.5) & Córneres (Over 6.5/7.5) • Neon Postgres Serverless
+              Sistema Predictivo de Alta Certeza para Goles y Córneres
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900/70 border border-slate-700/50 text-xs text-slate-300 backdrop-blur-md">
+          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/35 text-xs text-emerald-300 backdrop-blur-md">
             <IoServerOutline className="w-4 h-4 text-emerald-400" />
-            <span>Neon DB Connected</span>
-          </div>
-
-          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900/70 border border-slate-700/50 text-xs text-slate-300 backdrop-blur-md">
-            <IoFlashOutline className="w-4 h-4 text-[#EDBB00]" />
-            <span>Lineups Engine Active</span>
+            <span className="font-bold">🟢 Base de Datos Conectada</span>
           </div>
 
           <button

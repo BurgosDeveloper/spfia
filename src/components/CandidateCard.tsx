@@ -113,10 +113,10 @@ export default function CandidateCard({ candidate, activeFilter = "ALL" }: Candi
 
                 <div className="flex items-center gap-3.5 text-xs text-slate-400 mt-1.5 font-medium">
                   <span>
-                    Prob: <strong className="text-white font-bold">{(pick.probability * 100).toFixed(1)}%</strong>
+                    Prob. Pura: <strong className="text-white font-bold">{(pick.probability * 100).toFixed(1)}%</strong>
                   </span>
                   <span>
-                    Lím. Inf ($P_{"{low}"}$): <strong className="text-[#EDBB00] font-black">{(pick.pLower * 100).toFixed(1)}%</strong>
+                    Prob. Conservadora: <strong className="text-[#EDBB00] font-black">{(pick.pLower * 100).toFixed(1)}%</strong>
                   </span>
                   <span>
                     Estabilidad: <strong className="text-blue-300 font-bold">{(pick.stability * 100).toFixed(1)}%</strong>

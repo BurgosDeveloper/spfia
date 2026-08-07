@@ -25,6 +25,8 @@ const LEAGUES = [
   { code: "BL1", name: "Alemania - Bundesliga", flag: "🇩🇪" },
   { code: "BSA", name: "Brasil - Brasileirão Serie A", flag: "🇧🇷" },
   { code: "LPF", name: "Argentina - Liga Profesional Argentina", flag: "🇦🇷" },
+  { code: "PPL", name: "Portugal - Primeira Liga", flag: "🇵🇹" },
+  { code: "DED", name: "Países Bajos - Eredivisie", flag: "🇳🇱" },
 ];
 
 export default function Home() {
