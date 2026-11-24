@@ -1,9 +1,21 @@
+/**
+ * Proveedor Secundario de Calendario (football-data.org v4).
+ * Se usa únicamente como respaldo de calendario cuando el usuario consulta una fecha
+ * futura que aún no figura en football-data.co.uk/fixtures.csv.
+ * Todas las métricas estadísticas reales provienen de footballDataUk.ts.
+ */
+
 import { getCachedData, setCachedData } from "../cache/persistentCache";
-import { fetchMatchesFromApiFootball } from "./apiFootball";
+import {
+  resolveUkLeagueCode,
+  VERIFIED_LEAGUES,
+  VERIFIED_LEAGUES_MAP,
+} from "./footballDataUk";
 
 export interface MatchFixture {
-  id: number;
+  id: string;
   utcDate: string;
+  dateIso: string;
   status: string;
   matchday?: number;
   leagueCode: string;
@@ -15,135 +27,78 @@ export interface MatchFixture {
   };
 }
 
-export interface TeamStandingRate {
-  teamId: number;
-  teamName: string;
-  goalsForPerGame: number;
-  goalsAgainstPerGame: number;
-}
-
-export const SUPPORTED_LEAGUES: Record<string, { code: string; name: string; country: string }> = {
-  PD: { code: "PD", name: "LaLiga Primera", country: "España" },
-  SD: { code: "SD", name: "LaLiga Segunda Hypermotion", country: "España" },
-  PL: { code: "PL", name: "Premier League", country: "Inglaterra" },
-  ELC: { code: "ELC", name: "Championship", country: "Inglaterra" },
-  FL1: { code: "FL1", name: "Ligue 1", country: "Francia" },
-  SA: { code: "SA", name: "Serie A", country: "Italia" },
-  BL1: { code: "BL1", name: "Bundesliga", country: "Alemania" },
-  BSA: { code: "BSA", name: "Brasileirao Serie A", country: "Brasil" },
-  LPF: { code: "LPF", name: "Liga Profesional Argentina", country: "Argentina" },
-  PPL: { code: "PPL", name: "Primeira Liga", country: "Portugal" },
-  DED: { code: "DED", name: "Eredivisie", country: "Países Bajos" },
-};
+export const SUPPORTED_LEAGUES = Object.fromEntries(
+  VERIFIED_LEAGUES.map((l) => [l.code, l])
+);
 
 const BASE_URL = "https://api.football-data.org/v4";
 
 function getHeaders() {
-  const token = process.env.FOOTBALL_DATA_TOKEN || "946f807431bf460f868d279d49cfddd0";
+  const token = process.env.FOOTBALL_DATA_TOKEN || "";
   return {
     "X-Auth-Token": token,
-    "Accept": "application/json",
+    Accept: "application/json",
   };
 }
 
 /**
- * Obtiene los partidos programados para una fecha específica e inspeccionada estrictamente por liga.
- * Aplica filtro de fecha exacto YYYY-MM-DD y fallback directo hacia API-Football (api-sports.io).
+ * Consulta partidos futuros en football-data.org para las ligas europeas soportadas por su plan gratuito.
  */
-export async function fetchMatchesForDateAndLeague(
+export async function fetchScheduleFallbackForDate(
   dateStr: string,
   leagueCode: string
 ): Promise<MatchFixture[]> {
-  const cacheKey = `fd:matches:v2:${dateStr}:${leagueCode}`;
+  const ukCode = resolveUkLeagueCode(leagueCode);
+  const leagueInfo = VERIFIED_LEAGUES_MAP[ukCode];
+  if (!leagueInfo || !leagueInfo.fdOrgCode) return [];
+
+  const cacheKey = `fd:sched:v2:${dateStr}:${ukCode}`;
   const cached = await getCachedData<MatchFixture[]>(cacheKey);
   if (cached) return cached;
 
-  const url = `${BASE_URL}/competitions/${leagueCode}/matches?dateFrom=${dateStr}&dateTo=${dateStr}`;
+  const url = `${BASE_URL}/competitions/${leagueInfo.fdOrgCode}/matches?dateFrom=${dateStr}&dateTo=${dateStr}`;
 
   try {
-    const res = await fetch(url, { headers: getHeaders(), cache: "no-store" });
-    if (res.ok) {
-      const data = await res.json();
-      const rawMatches = data.matches || [];
-
-      // Filtro estricto de fecha YYYY-MM-DD para evitar desfases de zona horaria
-      const validMatches = rawMatches.filter((m: any) => {
-        const mDate = (m.utcDate || "").slice(0, 10);
-        return mDate === dateStr;
-      });
-
-      if (validMatches.length > 0) {
-        const matches: MatchFixture[] = validMatches.map((m: any) => ({
-          id: m.id,
-          utcDate: m.utcDate,
-          status: m.status,
-          matchday: m.matchday,
-          leagueCode: leagueCode,
-          leagueName: SUPPORTED_LEAGUES[leagueCode]?.name || leagueCode,
-          homeTeam: { id: m.homeTeam.id, name: m.homeTeam.name, shortName: m.homeTeam.shortName },
-          awayTeam: { id: m.awayTeam.id, name: m.awayTeam.name, shortName: m.awayTeam.shortName },
-          score: m.score,
-        }));
-
-        await setCachedData(cacheKey, matches, 43200);
-        return matches;
-      }
-    }
-  } catch (err) {
-    console.warn(`football-data.org falló o restreñido para ${leagueCode}, activando fallback API-Football...`);
-  }
-
-  // Fallback estricto con API-Football (api-sports.io) por League ID y fecha exacta
-  const fallbackMatches = await fetchMatchesFromApiFootball(dateStr, leagueCode);
-  if (fallbackMatches.length > 0) {
-    await setCachedData(cacheKey, fallbackMatches, 21600);
-  }
-  return fallbackMatches;
-}
-
-/**
- * Obtiene la tabla de posiciones y promedios de goles para la competición.
- */
-export async function fetchStandingsRates(
-  leagueCode: string
-): Promise<Record<number, TeamStandingRate>> {
-  const cacheKey = `fd:standings:${leagueCode}`;
-  const cached = await getCachedData<Record<number, TeamStandingRate>>(cacheKey);
-  if (cached) return cached;
-
-  const url = `${BASE_URL}/competitions/${leagueCode}/standings`;
-
-  try {
-    const res = await fetch(url, { headers: getHeaders(), cache: "no-store" });
-    if (!res.ok) return {};
+    const res = await fetch(url, {
+      headers: getHeaders(),
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return [];
 
     const data = await res.json();
-    const result: Record<number, TeamStandingRate> = {};
+    const rawMatches = data.matches || [];
+    const validMatches = rawMatches.filter(
+      (m: any) => (m.utcDate || "").slice(0, 10) === dateStr
+    );
 
-    const standings = data.standings || [];
-    const totalTable = standings.find((s: any) => s.type === "TOTAL") || standings[0];
+    const matches: MatchFixture[] = validMatches.map((m: any) => ({
+      id: `fd:${m.id}`,
+      utcDate: m.utcDate,
+      dateIso: (m.utcDate || "").slice(0, 10),
+      status: m.status,
+      matchday: m.matchday,
+      leagueCode: ukCode,
+      leagueName: leagueInfo.name,
+      homeTeam: {
+        id: m.homeTeam.id,
+        name: m.homeTeam.shortName || m.homeTeam.name,
+        shortName: m.homeTeam.shortName,
+      },
+      awayTeam: {
+        id: m.awayTeam.id,
+        name: m.awayTeam.shortName || m.awayTeam.name,
+        shortName: m.awayTeam.shortName,
+      },
+      score: m.score,
+    }));
 
-    if (totalTable && totalTable.table) {
-      for (const row of totalTable.table) {
-        const teamId = row.team.id;
-        const played = Math.max(1, row.playedGames || 1);
-        const gf = row.goalsFor || 0;
-        const ga = row.goalsAgainst || 0;
-
-        result[teamId] = {
-          teamId,
-          teamName: row.team.name,
-          goalsForPerGame: gf / played,
-          goalsAgainstPerGame: ga / played,
-        };
-      }
+    if (matches.length > 0) {
+      void setCachedData(cacheKey, matches, 21600).catch(() => {});
     }
-
-    // Cache por 24 horas para standings
-    await setCachedData(cacheKey, result, 86400);
-    return result;
+    return matches;
   } catch (err) {
-    console.error(`Error fetching standings para ${leagueCode}:`, err);
-    return {};
+    console.warn(`Respaldo football-data.org no disponible para ${ukCode}:`, err);
+    return [];
   }
 }

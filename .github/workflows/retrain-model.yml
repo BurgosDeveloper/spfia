@@ -1,0 +1,39 @@
+name: Monthly Model Recalibration
+
+on:
+  schedule:
+    - cron: "0 6 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install NumPy
+        run: python -m pip install --upgrade pip && pip install numpy
+
+      - name: Run quantitative training and 26/27 validation
+        run: python ml/train_and_backtest.py
+
+      - name: Commit updated calibrated_model.json if changed
+        run: |
+          git config user.name "spfia-bot"
+          git config user.email "spfia-bot@users.noreply.github.com"
+          if ! git diff --quiet src/lib/model/calibrated_model.json; then
+            git add src/lib/model/calibrated_model.json
+            git commit -m "chore(ml): monthly recalibration of 16-league model"
+            git push
+          else
+            echo "No model weight changes detected."
+          fi

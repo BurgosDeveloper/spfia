@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
-import { SUPPORTED_LEAGUES } from "@/lib/providers/footballData";
+import { VERIFIED_LEAGUES } from "@/lib/providers/footballDataUk";
+import { CALIBRATED_MODEL } from "@/lib/model/inference";
 
 export async function GET() {
-  const list = Object.values(SUPPORTED_LEAGUES);
-  return NextResponse.json({ ok: true, leagues: list });
+  return NextResponse.json({
+    ok: true,
+    leagues: VERIFIED_LEAGUES,
+    modelVersion: CALIBRATED_MODEL.version,
+    backtestSummary: CALIBRATED_MODEL.backtestSummary,
+    evSummary: CALIBRATED_MODEL.evSummary,
+  });
 }

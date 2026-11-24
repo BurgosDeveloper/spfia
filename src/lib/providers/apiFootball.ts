@@ -22,7 +22,7 @@ export interface TeamSeasonStats {
   awayGoalsAgainstPerGame: number;
 }
 
-const API_KEY = process.env.API_FOOTBALL_DATA_TOKEN || "f10f4374d9c89e9218f7e716912251af";
+const API_KEY = process.env.API_FOOTBALL_DATA_TOKEN || "";
 const BASE_URL = "https://v3.football.api-sports.io";
 
 export const API_FOOTBALL_LEAGUE_IDS: Record<string, number> = {
@@ -247,8 +247,9 @@ export async function fetchMatchesFromApiFootball(
 
       if (isMatch && !matchesMap.has(item.fixture.id)) {
         matchesMap.set(item.fixture.id, {
-          id: item.fixture.id,
+          id: String(item.fixture.id),
           utcDate: item.fixture.date,
+          dateIso: (item.fixture.date || "").slice(0, 10),
           status: item.fixture.status?.short || "NS",
           matchday: fLeague.round ? parseInt(fLeague.round.replace(/\D/g, "") || "1", 10) : 1,
           leagueCode: leagueCode,

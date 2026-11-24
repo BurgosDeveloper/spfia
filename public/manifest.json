@@ -1,0 +1,18 @@
+{
+  "name": "SPFIA Picks",
+  "short_name": "SPFIA",
+  "description": "Pronósticos deportivos de alta seguridad y buenas cuotas en 16 ligas europeas.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07090e",
+  "theme_color": "#07090e",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

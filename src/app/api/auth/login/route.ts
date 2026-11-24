@@ -5,9 +5,11 @@ export async function POST(req: Request) {
     const { username, password } = await req.json();
 
     const expectedUser = process.env.ADMIN_USERNAME || "admin";
-    const expectedPass = process.env.ADMIN_PASSWORD || "spfia_admin_2026";
+    const expectedPass =
+      process.env.ADMIN_PASSWORD ||
+      (process.env.NODE_ENV === "production" ? "" : "spfia_admin_2026");
 
-    if (username === expectedUser && password === expectedPass) {
+    if (expectedPass && username === expectedUser && password === expectedPass) {
       const response = NextResponse.json({ ok: true, message: "Login exitoso" });
       
       response.cookies.set({
