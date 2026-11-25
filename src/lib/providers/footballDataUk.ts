@@ -142,6 +142,44 @@ const TEAM_ALIASES: Record<string, string> = {
   "blackburn rovers": "blackburn",
   "queens park rangers": "qpr",
   "oxford united": "oxford",
+  "cardiff city": "cardiff",
+  "preston north end": "preston",
+  "swansea city": "swansea",
+  "norwich city": "norwich",
+  "derby county": "derby",
+  "lincoln city": "lincoln",
+  "charlton athletic": "charlton",
+  "stoke city": "stoke",
+  "hull city": "hull",
+  "coventry city": "coventry",
+  "birmingham city": "birmingham",
+  "watford": "watford",
+  "millwall": "millwall",
+  "burnley": "burnley",
+  "bolton wanderers": "bolton",
+  "portsmouth": "portsmouth",
+  "southampton": "southampton",
+  "bristol city": "bristol city",
+  "wrexham": "wrexham",
+  "aberdeen": "aberdeen",
+  "rangers": "rangers",
+  "hibernian": "hibernian",
+  "dundee": "dundee",
+  "dundee fc": "dundee",
+  "empoli": "empoli",
+  "palermo": "palermo",
+  "sudtirol": "sudtirol",
+  "benevento": "benevento",
+  "cesena": "cesena",
+  "ascoli": "ascoli",
+  "vicenza": "vicenza",
+  "carrarese": "carrarese",
+  "juve stabia": "juve stabia",
+  "catanzaro": "catanzaro",
+  "mantova": "mantova",
+  "arezzo": "arezzo",
+  "pisa": "pisa",
+  "modena": "modena",
   "paris saint germain": "paris sg",
   "olympique lyonnais": "lyon",
   "olympique de marseille": "marseille",
@@ -222,7 +260,7 @@ export function normalizeTeamName(raw: string): string {
   return TEAM_ALIASES[cleaned] || cleaned;
 }
 
-function teamsMatch(candidateName: string, targetName: string): boolean {
+export function teamsMatch(candidateName: string, targetName: string): boolean {
   const a = normalizeTeamName(candidateName);
   const b = normalizeTeamName(targetName);
   if (!a || !b) return false;
@@ -646,4 +684,183 @@ export function findFinishedUkMatch(
       teamsMatch(r.homeTeam, homeTeam) &&
       teamsMatch(r.awayTeam, awayTeam)
   );
+}
+
+// ---------------------------------------------------------------------------
+// Liquidación en Tiempo Real vía ESPN Public API (16 Ligas Europeas)
+// ---------------------------------------------------------------------------
+
+const ESPN_LEAGUE_SLUGS: Record<string, string> = {
+  E0: "eng.1",
+  E1: "eng.2",
+  SP1: "esp.1",
+  SP2: "esp.2",
+  I1: "ita.1",
+  I2: "ita.2",
+  D1: "ger.1",
+  D2: "ger.2",
+  F1: "fra.1",
+  F2: "fra.2",
+  P1: "por.1",
+  N1: "ned.1",
+  B1: "bel.1",
+  SC0: "sco.1",
+  T1: "tur.1",
+  G1: "gre.1",
+};
+
+export interface EspnFinishedMatch {
+  eventId: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeTeamId: string;
+  awayTeamId: string;
+  fthg: number;
+  ftag: number;
+  hc: number | null;
+  ac: number | null;
+}
+
+async function fetchEspnCornersForEvent(
+  slug: string,
+  eventId: string,
+  homeTeamId: string,
+  awayTeamId: string
+): Promise<{ hc: number | null; ac: number | null }> {
+  const cacheKey = `espn:corners:v1:${slug}:${eventId}`;
+  const mem = getMem<{ hc: number | null; ac: number | null }>(cacheKey);
+  if (mem) return mem;
+
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/${slug}/summary?event=${eventId}`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (SPFIA Quant Engine)" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { hc: null, ac: null };
+
+    const data = await res.json();
+    const teams: any[] = data?.boxscore?.teams || [];
+    if (teams.length < 2) return { hc: null, ac: null };
+
+    const readCorners = (teamEntry: any): number | null => {
+      const stat = (teamEntry?.statistics || []).find(
+        (s: any) => s?.name === "wonCorners"
+      );
+      if (!stat) return null;
+      const val = Number(stat.displayValue ?? stat.value);
+      return Number.isFinite(val) ? Math.round(val) : null;
+    };
+
+    let homeEntry = teams.find((t) => String(t?.team?.id) === homeTeamId);
+    let awayEntry = teams.find((t) => String(t?.team?.id) === awayTeamId);
+    if (!homeEntry || !awayEntry) {
+      homeEntry = teams.find((t) => t?.homeAway === "home") || teams[0];
+      awayEntry = teams.find((t) => t?.homeAway === "away") || teams[1];
+    }
+
+    const result = {
+      hc: readCorners(homeEntry),
+      ac: readCorners(awayEntry),
+    };
+    if (result.hc !== null && result.ac !== null) {
+      setMem(cacheKey, result, 86400);
+    }
+    return result;
+  } catch (err) {
+    console.warn(`Error leyendo córneres ESPN (${slug}/${eventId}):`, err);
+    return { hc: null, ac: null };
+  }
+}
+
+export async function fetchEspnFinishedMatchesForDate(
+  divCode: string,
+  dateIso: string,
+  matchesNeedingCorners: Array<{ homeTeam: string; awayTeam: string }> = []
+): Promise<EspnFinishedMatch[]> {
+  const code = resolveUkLeagueCode(divCode);
+  const slug = ESPN_LEAGUE_SLUGS[code];
+  if (!slug) return [];
+
+  const yyyymmdd = dateIso.replace(/-/g, "");
+  const boardKey = `espn:board:v1:${slug}:${yyyymmdd}`;
+  let baseMatches = getMem<EspnFinishedMatch[]>(boardKey);
+
+  if (!baseMatches) {
+    try {
+      const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/${slug}/scoreboard?dates=${yyyymmdd}`;
+      const res = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (SPFIA Quant Engine)" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return [];
+
+      const data = await res.json();
+      const events: any[] = data?.events || [];
+      const parsed: EspnFinishedMatch[] = [];
+
+      for (const ev of events) {
+        const comp = ev?.competitions?.[0];
+        const statusType = ev?.status?.type || {};
+        const isDone =
+          Boolean(statusType.completed) ||
+          statusType.name === "STATUS_FULL_TIME" ||
+          statusType.state === "post";
+        if (!isDone || !comp) continue;
+
+        const competitors: any[] = comp.competitors || [];
+        const home = competitors.find((c) => c?.homeAway === "home");
+        const away = competitors.find((c) => c?.homeAway === "away");
+        if (!home || !away) continue;
+
+        const fthg = Number(home.score);
+        const ftag = Number(away.score);
+        if (!Number.isFinite(fthg) || !Number.isFinite(ftag)) continue;
+
+        parsed.push({
+          eventId: String(ev.id),
+          homeTeam: home.team?.displayName || home.team?.shortDisplayName || "",
+          awayTeam: away.team?.displayName || away.team?.shortDisplayName || "",
+          homeTeamId: String(home.team?.id || ""),
+          awayTeamId: String(away.team?.id || ""),
+          fthg: Math.round(fthg),
+          ftag: Math.round(ftag),
+          hc: null,
+          ac: null,
+        });
+      }
+
+      baseMatches = parsed;
+      setMem(boardKey, baseMatches, 900);
+    } catch (err) {
+      console.warn(`Error leyendo scoreboard ESPN (${slug} ${dateIso}):`, err);
+      return [];
+    }
+  }
+
+  if (matchesNeedingCorners.length === 0 || baseMatches.length === 0) {
+    return baseMatches;
+  }
+
+  const enriched = await Promise.all(
+    baseMatches.map(async (m) => {
+      const needs = matchesNeedingCorners.some(
+        (target) =>
+          teamsMatch(m.homeTeam, target.homeTeam) &&
+          teamsMatch(m.awayTeam, target.awayTeam)
+      );
+      if (!needs || (m.hc !== null && m.ac !== null)) return m;
+      const corners = await fetchEspnCornersForEvent(
+        slug,
+        m.eventId,
+        m.homeTeamId,
+        m.awayTeamId
+      );
+      return { ...m, hc: corners.hc, ac: corners.ac };
+    })
+  );
+
+  return enriched;
 }

@@ -642,9 +642,12 @@ export default function Home() {
                   </div>
                 </div>
                 <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/10 text-center">
-                  <div className="text-[10px] text-slate-400 font-bold">Ganados / Pend.</div>
+                  <div className="text-[10px] text-slate-400 font-bold">
+                    Ganados / Perd. / Pend.
+                  </div>
                   <div className="text-lg font-black text-[#EDBB00] mt-0.5">
-                    {historyData.kpis.won} / {historyData.kpis.pending}
+                    {historyData.kpis.won}G &bull; {historyData.kpis.lost}P &bull;{" "}
+                    {historyData.kpis.pending}
                   </div>
                 </div>
               </div>
@@ -654,7 +657,7 @@ export default function Home() {
               <div className="text-center py-6 text-xs text-slate-400">Cargando resultados...</div>
             ) : (
               <div className="space-y-2">
-                {(historyData?.picks || []).slice(0, 40).map((p: any) => (
+                {(historyData?.picks || []).slice(0, 60).map((p: any) => (
                   <div
                     key={p.id}
                     className="p-3 rounded-xl bg-slate-950/65 border border-slate-800/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
@@ -671,6 +674,16 @@ export default function Home() {
                           {(p.probability * 100).toFixed(1)}%
                         </strong>
                         {p.odds > 1.01 ? ` • Cuota ${p.odds}` : ""}
+                        {p.reasoning?.settledScore && (
+                          <span className="text-emerald-300 font-bold">
+                            {" "}
+                            &bull; Final: {p.reasoning.settledScore}
+                            {p.reasoning.settledCorners !== null &&
+                            p.reasoning.settledCorners !== undefined
+                              ? ` (${p.reasoning.settledCorners} Córneres)`
+                              : ""}
+                          </span>
+                        )}
                       </div>
                     </div>
 

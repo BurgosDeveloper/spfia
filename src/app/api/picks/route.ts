@@ -12,7 +12,9 @@ export async function GET(req: Request) {
     const league = searchParams.get("league") || undefined;
     const date = searchParams.get("date") || undefined;
 
-    const where: any = {};
+    const where: any = {
+      runTag: { in: ["TIER_S", "TIER_A"] },
+    };
     if (decision && decision !== "ALL") where.decision = decision;
     if (league && league !== "ALL") where.candidate = { league };
     if (date) where.candidate = { ...(where.candidate || {}), date };
@@ -26,7 +28,6 @@ export async function GET(req: Request) {
           candidate: true,
         },
         orderBy: [{ candidate: { kickoffUtc: "desc" } }, { createdAt: "desc" }],
-        take: 150,
       });
     } catch (dbErr) {
       console.warn("DB no disponible en /api/picks, devolviendo backtest:", dbErr);
@@ -72,7 +73,7 @@ export async function GET(req: Request) {
       ok: true,
       dbConnected,
       count: picks.length,
-      picks,
+      picks: picks.slice(0, 100),
       kpis: {
         totalBets: betPicks.length,
         won,
