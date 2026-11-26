@@ -106,6 +106,7 @@ export default function Home() {
             league: activeLeague,
             mode: apiMode,
             date: effectiveDate,
+            clientToday: getLocalTodayIso(),
           }),
         });
 
@@ -446,8 +447,8 @@ export default function Home() {
                   <div className="mt-3 pt-2.5 border-t border-white/10 text-[11px] text-slate-400 flex items-center gap-1.5">
                     <IoShieldCheckmark className="w-4 h-4 text-[#EDBB00] shrink-0" />
                     <span>
-                      Regla de seguridad: juega solo 2–3 selecciones puras Tier S (1 condición por
-                      partido). Evita agregar cuotas de relleno &lt; 1.15.
+                      Regla de seguridad: juega solo 2–3 selecciones puras Tier S. Si tu casa no
+                      ofrece la línea exacta o paga menos de la cuota buena, NO fuerces la apuesta.
                     </span>
                   </div>
                 </section>

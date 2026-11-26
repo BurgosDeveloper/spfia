@@ -10,6 +10,10 @@ export async function POST(req: Request) {
     const league = typeof body.league === "string" && body.league.trim() ? body.league.trim() : "ALL";
     const mode = body.mode === "DATE" ? "DATE" : "UPCOMING";
     const date = typeof body.date === "string" && body.date.trim() ? body.date.trim() : undefined;
+    const clientToday =
+      typeof body.clientToday === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.clientToday.trim())
+        ? body.clientToday.trim()
+        : undefined;
 
     if (mode === "DATE" && !date) {
       return NextResponse.json(
@@ -18,7 +22,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = await analyzeSlate({ league, date, mode, persist: true });
+    const result = await analyzeSlate({ league, date, mode, clientToday, persist: true });
 
     return NextResponse.json({
       ok: true,

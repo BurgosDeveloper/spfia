@@ -4,7 +4,7 @@
  * árbitros y cuotas reales de Bet365 y Betfair Exchange (BFE) sin costo ni límites diarios.
  */
 
-import { getCachedData, setCachedData } from "../cache/persistentCache";
+import { getCachedData, getCachedDataWithStale, setCachedData } from "../cache/persistentCache";
 import { devigThreeWay, devigTwoWay, dutchDoubleChanceOdds } from "../math/poisson";
 import { CALIBRATED_MODEL, LeagueParams } from "../model/inference";
 
@@ -246,6 +246,23 @@ const TEAM_ALIASES: Record<string, string> = {
   "feyenoord rotterdam": "feyenoord",
   "twente enschede": "twente",
   "nec": "nijmegen",
+  "athletic club": "ath bilbao",
+  "celta vigo": "celta",
+  "sporting cp": "sp lisbon",
+  "sl benfica": "benfica",
+  "bayern munich": "bayern munich",
+  "bayer leverkusen": "leverkusen",
+  "rb leipzig": "rb leipzig",
+  "mainz 05": "mainz",
+  "1 mainz 05": "mainz",
+  "1 koln": "koln",
+  "1 heidenheim 1846": "heidenheim",
+  "1 union berlin": "union berlin",
+  "st pauli 1910": "st pauli",
+  "club brugge": "club brugge",
+  "union saint gilloise": "st gilloise",
+  "olympiakos": "olympiakos",
+  "olympiacos": "olympiakos",
 };
 
 export function normalizeTeamName(raw: string): string {
@@ -371,11 +388,13 @@ async function fetchSeasonCsv(season: string, divCode: string): Promise<Historic
   const mem = getMem<HistoricalMatchRow[]>(key);
   if (mem) return mem;
 
-  const dbCached = await getCachedData<HistoricalMatchRow[]>(key);
-  if (dbCached && dbCached.length > 0) {
-    setMem(key, dbCached, season === "2627" ? 3600 : 86400);
-    return dbCached;
+  const dbCached = await getCachedDataWithStale<HistoricalMatchRow[]>(key);
+  if (dbCached && dbCached.isFresh && dbCached.data.length > 0) {
+    setMem(key, dbCached.data, season === "2627" ? 3600 : 86400);
+    return dbCached.data;
   }
+
+  const staleFallback = dbCached && dbCached.data.length > 0 ? dbCached.data : null;
 
   const url = `https://www.football-data.co.uk/mmz4281/${season}/${divCode}.csv`;
   let res: Response;
@@ -387,9 +406,19 @@ async function fetchSeasonCsv(season: string, divCode: string): Promise<Historic
     });
   } catch (err) {
     console.warn(`Timeout o error descargando ${season}/${divCode}.csv:`, err);
+    if (staleFallback) {
+      setMem(key, staleFallback, 1800);
+      return staleFallback;
+    }
     return [];
   }
-  if (!res.ok) return [];
+  if (!res.ok) {
+    if (staleFallback) {
+      setMem(key, staleFallback, 1800);
+      return staleFallback;
+    }
+    return [];
+  }
 
   const text = await res.text();
   const rawRows = parseCsvRecords(text);
@@ -863,4 +892,206 @@ export async function fetchEspnFinishedMatchesForDate(
   );
 
   return enriched;
+}
+
+// ---------------------------------------------------------------------------
+// Calendario y Cuotas Próximas vía ESPN Public API (16 Ligas Europeas)
+// ---------------------------------------------------------------------------
+
+export function americanToDecimal(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  const str = String(raw).trim().toUpperCase();
+  if (!str) return null;
+  if (str === "EVEN" || str === "EV") return 2.0;
+  const num = Number(str.replace(/^\+/, ""));
+  if (!Number.isFinite(num) || num === 0) return null;
+  const dec = num > 0 ? 1 + num / 100 : 1 + 100 / Math.abs(num);
+  return Number.isFinite(dec) && dec > 1.01 ? Number(dec.toFixed(3)) : null;
+}
+
+export function extractOddsFromEspnCompetition(comp: any): LiveMarketOdds {
+  const empty: LiveMarketOdds = {
+    hasMarketOdds: false,
+    pMktH: null,
+    pMktD: null,
+    pMktA: null,
+    pMktO25: null,
+    oddsH: null,
+    oddsD: null,
+    oddsA: null,
+    oddsO25: null,
+    oddsU25: null,
+    odds1X: null,
+    oddsX2: null,
+    ahh: null,
+  };
+
+  const o = comp?.odds?.[0];
+  if (!o) return empty;
+
+  const oddsH = americanToDecimal(
+    o.moneyline?.home?.close?.odds ?? o.moneyline?.home?.open?.odds ?? o.homeTeamOdds?.moneyLine
+  );
+  const oddsA = americanToDecimal(
+    o.moneyline?.away?.close?.odds ?? o.moneyline?.away?.open?.odds ?? o.awayTeamOdds?.moneyLine
+  );
+  const oddsD = americanToDecimal(
+    o.moneyline?.draw?.close?.odds ?? o.moneyline?.draw?.open?.odds ?? o.drawOdds?.moneyLine
+  );
+
+  let pMktH: number | null = null;
+  let pMktD: number | null = null;
+  let pMktA: number | null = null;
+  if (oddsH && oddsD && oddsA) {
+    [pMktH, pMktD, pMktA] = devigThreeWay(oddsH, oddsD, oddsA);
+  }
+
+  const overLine = String(
+    o.total?.over?.close?.line ?? o.total?.over?.open?.line ?? ""
+  ).toLowerCase();
+  const isTotal25 = Number(o.overUnder) === 2.5 || overLine === "o2.5" || overLine === "2.5";
+
+  const oddsO25 = isTotal25
+    ? americanToDecimal(o.total?.over?.close?.odds ?? o.total?.over?.open?.odds)
+    : null;
+  const oddsU25 = isTotal25
+    ? americanToDecimal(o.total?.under?.close?.odds ?? o.total?.under?.open?.odds)
+    : null;
+
+  let pMktO25: number | null = null;
+  if (oddsO25 && oddsU25) {
+    [pMktO25] = devigTwoWay(oddsO25, oddsU25);
+  }
+
+  const odds1X =
+    oddsH && oddsD ? Number(dutchDoubleChanceOdds(oddsH, oddsD).toFixed(2)) : null;
+  const oddsX2 =
+    oddsD && oddsA ? Number(dutchDoubleChanceOdds(oddsD, oddsA).toFixed(2)) : null;
+
+  const hcRaw = Number(o.pointSpread?.home?.close?.line ?? o.spread);
+  const ahh = Number.isFinite(hcRaw) ? hcRaw : null;
+
+  return {
+    hasMarketOdds: pMktO25 !== null && pMktH !== null && pMktD !== null && pMktA !== null,
+    pMktH,
+    pMktD,
+    pMktA,
+    pMktO25,
+    oddsH,
+    oddsD,
+    oddsA,
+    oddsO25,
+    oddsU25,
+    odds1X,
+    oddsX2,
+    ahh,
+  };
+}
+
+export async function fetchEspnUpcomingFixtures(
+  datesIso: string[],
+  targetLeague?: string
+): Promise<UpcomingUkFixture[]> {
+  const validDates = Array.from(
+    new Set(datesIso.map((d) => d.trim()).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))
+  );
+  if (validDates.length === 0) return [];
+
+  const upperTarget = (targetLeague || "ALL").toUpperCase();
+  const leagueCodes =
+    upperTarget !== "ALL"
+      ? [resolveUkLeagueCode(upperTarget)].filter((c) => Boolean(ESPN_LEAGUE_SLUGS[c]))
+      : Object.keys(ESPN_LEAGUE_SLUGS);
+
+  const tasks: Array<{ leagueCode: string; slug: string; dateIso: string }> = [];
+  for (const leagueCode of leagueCodes) {
+    const slug = ESPN_LEAGUE_SLUGS[leagueCode];
+    if (!slug) continue;
+    for (const dateIso of validDates) {
+      tasks.push({ leagueCode, slug, dateIso });
+    }
+  }
+
+  const perDayResults = await Promise.all(
+    tasks.map(async ({ leagueCode, slug, dateIso }): Promise<UpcomingUkFixture[]> => {
+      const yyyymmdd = dateIso.replace(/-/g, "");
+      const memKey = `espn:upcoming:v1:${slug}:${yyyymmdd}`;
+      const cached = getMem<UpcomingUkFixture[]>(memKey);
+      if (cached) return cached;
+
+      try {
+        const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/${slug}/scoreboard?dates=${yyyymmdd}`;
+        const res = await fetch(url, {
+          headers: { "User-Agent": "Mozilla/5.0 (SPFIA Quant Engine)" },
+          cache: "no-store",
+          signal: AbortSignal.timeout(7000),
+        });
+        if (!res.ok) return [];
+
+        const data = await res.json();
+        const events: any[] = data?.events || [];
+        const lgInfo = VERIFIED_LEAGUES_MAP[leagueCode];
+        const parsed: UpcomingUkFixture[] = [];
+
+        for (const ev of events) {
+          const comp = ev?.competitions?.[0];
+          const statusType = ev?.status?.type || {};
+          const isFinishedOrCancelled =
+            Boolean(statusType.completed) ||
+            statusType.state === "post" ||
+            statusType.name === "STATUS_FULL_TIME" ||
+            statusType.name === "STATUS_POSTPONED" ||
+            statusType.name === "STATUS_CANCELED";
+          if (isFinishedOrCancelled || !comp) continue;
+
+          const competitors: any[] = comp.competitors || [];
+          const home = competitors.find((c) => c?.homeAway === "home");
+          const away = competitors.find((c) => c?.homeAway === "away");
+          if (!home || !away) continue;
+
+          const homeTeam = (home.team?.displayName || home.team?.shortDisplayName || "").trim();
+          const awayTeam = (away.team?.displayName || away.team?.shortDisplayName || "").trim();
+          if (!homeTeam || !awayTeam) continue;
+
+          const rawDate = typeof ev.date === "string" ? ev.date : `${dateIso}T15:00:00Z`;
+          const evDateIso = /^\d{4}-\d{2}-\d{2}/.test(rawDate) ? rawDate.slice(0, 10) : dateIso;
+          const timeMatch = rawDate.match(/T(\d{2}:\d{2})/);
+          const timeUtc = timeMatch ? timeMatch[1] : "15:00";
+
+          const slugH = normalizeTeamName(homeTeam).replace(/\s+/g, "-");
+          const slugA = normalizeTeamName(awayTeam).replace(/\s+/g, "-");
+
+          parsed.push({
+            fixtureId: `espn:${leagueCode}:${evDateIso}:${slugH}:${slugA}`,
+            league: leagueCode,
+            leagueName: lgInfo?.name || leagueCode,
+            dateIso: evDateIso,
+            timeUtc,
+            kickoffUtc: rawDate,
+            homeTeam,
+            awayTeam,
+            referee: null,
+            odds: extractOddsFromEspnCompetition(comp),
+          });
+        }
+
+        setMem(memKey, parsed, 600);
+        return parsed;
+      } catch (err) {
+        console.warn(`Error leyendo próximos partidos ESPN (${slug} ${dateIso}):`, err);
+        return [];
+      }
+    })
+  );
+
+  // Deduplicar por fixtureId en caso de solapamiento de zona horaria entre días consecutivos
+  const dedup = new Map<string, UpcomingUkFixture>();
+  for (const list of perDayResults) {
+    for (const fx of list) {
+      if (!dedup.has(fx.fixtureId)) {
+        dedup.set(fx.fixtureId, fx);
+      }
+    }
+  }
+  return Array.from(dedup.values());
 }

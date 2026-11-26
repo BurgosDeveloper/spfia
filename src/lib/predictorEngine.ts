@@ -26,6 +26,7 @@ import {
 import { fetchScheduleFallbackForDate } from "./providers/footballData";
 import {
   computeTeamSnapshotAsOf,
+  fetchEspnUpcomingFixtures,
   fetchLeagueHistory,
   fetchUpcomingFixtures,
   findFinishedUkMatch,
@@ -33,6 +34,7 @@ import {
   LiveMarketOdds,
   normalizeTeamName,
   resolveUkLeagueCode,
+  teamsMatch,
   TeamWindowStats,
   VERIFIED_LEAGUES_MAP,
 } from "./providers/footballDataUk";
@@ -113,6 +115,7 @@ export interface AnalyzeSlateInput {
   league?: string; // "ALL" o código de liga (ej. "E0", "SP1")
   date?: string; // YYYY-MM-DD
   mode?: "UPCOMING" | "DATE";
+  clientToday?: string; // YYYY-MM-DD fecha local del cliente
   persist?: boolean;
 }
 
@@ -298,6 +301,8 @@ export function evaluateMatchFromSnapshot(params: {
   });
 
   const stability = Number((0.68 + 0.28 * assembled.sampleConf).toFixed(4));
+  const hasSolidSample =
+    params.homeStats.matchesCount >= 10 && params.awayStats.matchesCount >= 10;
 
   const sharedTeamStats = {
     homeGoalsFor: Number(params.homeStats.goalsFor.toFixed(2)),
@@ -322,6 +327,9 @@ export function evaluateMatchFromSnapshot(params: {
   if (pO15 >= 0.82 && mc.pO15 >= 0.78 && assembled.dc.p00 <= 0.115) {
     o15Tier = "TIER_S";
   } else if (pO15 >= 0.76 && assembled.dc.p00 <= 0.135) {
+    o15Tier = "TIER_A";
+  }
+  if (!hasSolidSample && o15Tier === "TIER_S") {
     o15Tier = "TIER_A";
   }
   const o15Kelly = calculateKellyStake(pO15, 0, 0.25, 0.03);
@@ -378,6 +386,9 @@ export function evaluateMatchFromSnapshot(params: {
     if (kelly25.ev >= 0.06 && p25 >= 0.58) tier25 = "TIER_S";
     else if (kelly25.ev >= 0.03 && p25 >= 0.55) tier25 = "TIER_A";
   }
+  if (!hasSolidSample && tier25 === "TIER_S") {
+    tier25 = "TIER_A";
+  }
 
   picks.push({
     tier: tier25,
@@ -433,6 +444,9 @@ export function evaluateMatchFromSnapshot(params: {
   } else if (pC65 >= 0.80) {
     cTier = "TIER_A";
     cThr = 0.80;
+  }
+  if (!hasSolidSample && cTier === "TIER_S") {
+    cTier = "TIER_A";
   }
 
   const cKelly = calculateKellyStake(cProb, 0, 0.25, 0.03);
@@ -496,6 +510,9 @@ export function evaluateMatchFromSnapshot(params: {
       else if (dcKelly.ev >= 0.02 && dcProb >= 0.78) dcTier = "TIER_A";
     }
   } else if (dcProb >= 0.86) {
+    dcTier = "TIER_A";
+  }
+  if (!hasSolidSample && dcTier === "TIER_S") {
     dcTier = "TIER_A";
   }
 
@@ -728,6 +745,12 @@ async function persistCandidatesToDb(candidates: CandidateResult[]): Promise<voi
   });
 }
 
+function addDaysIso(baseIso: string, days: number): string {
+  const [y, m, d] = baseIso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return dt.toISOString().slice(0, 10);
+}
+
 /**
  * Orquestador principal de análisis de jornada (16 ligas verificadas).
  */
@@ -736,6 +759,10 @@ export async function analyzeSlate(input: AnalyzeSlateInput = {}): Promise<Analy
   const leagueRaw = (input.league || "ALL").toUpperCase();
   const targetLeague = leagueRaw === "ALL" ? "ALL" : resolveUkLeagueCode(leagueRaw);
   const dateFilter = input.date?.trim();
+  const todayIso =
+    input.clientToday && /^\d{4}-\d{2}-\d{2}$/.test(input.clientToday.trim())
+      ? input.clientToday.trim()
+      : new Date().toISOString().slice(0, 10);
   const persist = input.persist !== false;
 
   const emptyOdds: LiveMarketOdds = {
@@ -772,12 +799,26 @@ export async function analyzeSlate(input: AnalyzeSlateInput = {}): Promise<Analy
   const jobs: PendingFixtureJob[] = [];
   let sourceInfo = "football-data.co.uk (Próxima Jornada con Cuotas Reales)";
 
-  // 1. Buscar en fixtures.csv en vivo
-  const upcoming = await fetchUpcomingFixtures();
-  for (const fx of upcoming) {
-    if (targetLeague !== "ALL" && fx.league !== targetLeague) continue;
-    if (mode === "DATE" && dateFilter && fx.dateIso !== dateFilter) continue;
-
+  // Helper para fusionar fixtures sin duplicar partidos entre proveedores
+  const pushUniqueFixture = (fx: {
+    fixtureId: string;
+    league: string;
+    leagueName: string;
+    dateIso: string;
+    kickoffUtc: string;
+    homeTeam: string;
+    awayTeam: string;
+    referee: string | null;
+    odds: LiveMarketOdds;
+  }): boolean => {
+    const duplicate = jobs.some(
+      (j) =>
+        j.league === fx.league &&
+        j.dateIso === fx.dateIso &&
+        teamsMatch(j.homeTeam, fx.homeTeam) &&
+        teamsMatch(j.awayTeam, fx.awayTeam)
+    );
+    if (duplicate) return false;
     const lgInfo = VERIFIED_LEAGUES_MAP[fx.league];
     jobs.push({
       fixtureId: fx.fixtureId,
@@ -792,6 +833,40 @@ export async function analyzeSlate(input: AnalyzeSlateInput = {}): Promise<Analy
       status: "SCHEDULED",
       odds: fx.odds,
     });
+    return true;
+  };
+
+  // 1. Buscar en fixtures.csv en vivo (en modo UPCOMING descartar fechas anteriores a todayIso)
+  const upcoming = await fetchUpcomingFixtures();
+  let csvAdded = 0;
+  for (const fx of upcoming) {
+    if (targetLeague !== "ALL" && fx.league !== targetLeague) continue;
+    if (mode === "UPCOMING" && fx.dateIso < todayIso) continue;
+    if (mode === "DATE" && dateFilter && fx.dateIso !== dateFilter) continue;
+    if (pushUniqueFixture(fx)) csvAdded++;
+  }
+
+  // 1B. Fusionar calendario y cuotas en vivo desde ESPN para hoy/próximos días o fecha específica >= todayIso
+  let espnAdded = 0;
+  if (mode === "UPCOMING") {
+    const windowDates = [todayIso, addDaysIso(todayIso, 1), addDaysIso(todayIso, 2)];
+    const espnUpcoming = await fetchEspnUpcomingFixtures(windowDates, targetLeague);
+    for (const fx of espnUpcoming) {
+      if (fx.dateIso < todayIso) continue;
+      if (pushUniqueFixture(fx)) espnAdded++;
+    }
+  } else if (mode === "DATE" && dateFilter && dateFilter >= todayIso) {
+    const espnForDate = await fetchEspnUpcomingFixtures([dateFilter], targetLeague);
+    for (const fx of espnForDate) {
+      if (fx.dateIso !== dateFilter) continue;
+      if (pushUniqueFixture(fx)) espnAdded++;
+    }
+  }
+
+  if (csvAdded > 0 && espnAdded > 0) {
+    sourceInfo = "football-data.co.uk + ESPN Live (Próxima Jornada con Cuotas Reales)";
+  } else if (espnAdded > 0 && csvAdded === 0) {
+    sourceInfo = "ESPN Live Scoreboard + Cuotas DraftKings (Calendario Actualizado)";
   }
 
   // 2. Si se pidió fecha específica y liga específica y no está en fixtures.csv:
@@ -856,13 +931,28 @@ export async function analyzeSlate(input: AnalyzeSlateInput = {}): Promise<Analy
   }
 
   if (jobs.length === 0) {
-    const filteredUpcoming = upcoming
-      .filter((fx) => targetLeague === "ALL" || fx.league === targetLeague)
-      .map((fx) => fx.dateIso)
-      .sort();
+    const csvDates = upcoming
+      .filter(
+        (fx) =>
+          (targetLeague === "ALL" || fx.league === targetLeague) && fx.dateIso >= todayIso
+      )
+      .map((fx) => fx.dateIso);
+
+    const probeBase = dateFilter && dateFilter >= todayIso ? dateFilter : todayIso;
+    const probeDates = [
+      addDaysIso(probeBase, 1),
+      addDaysIso(probeBase, 2),
+      addDaysIso(probeBase, 3),
+    ];
+    const espnFuture = await fetchEspnUpcomingFixtures(probeDates, targetLeague);
+
+    const futureDates = Array.from(
+      new Set([...csvDates, ...espnFuture.map((fx) => fx.dateIso)].filter((d) => d >= todayIso))
+    ).sort();
+
     const nextAfter = dateFilter
-      ? filteredUpcoming.find((d) => d > dateFilter) || filteredUpcoming[0] || null
-      : filteredUpcoming[0] || null;
+      ? futureDates.find((d) => d > dateFilter) || futureDates[0] || null
+      : futureDates[0] || null;
 
     return {
       candidates: [],

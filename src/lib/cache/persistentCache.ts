@@ -20,6 +20,26 @@ export async function getCachedData<T>(key: string): Promise<T | null> {
   }
 }
 
+export async function getCachedDataWithStale<T>(
+  key: string
+): Promise<{ data: T; isFresh: boolean } | null> {
+  try {
+    const item = await prisma.apiCache.findUnique({
+      where: { key },
+    });
+
+    if (!item) return null;
+
+    return {
+      data: item.value as T,
+      isFresh: new Date() < new Date(item.expiresAtUtc),
+    };
+  } catch (error) {
+    console.error(`Error de lectura en cache persistente (${key}):`, error);
+    return null;
+  }
+}
+
 export async function setCachedData<T>(
   key: string,
   value: T,
