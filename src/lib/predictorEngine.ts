@@ -48,7 +48,9 @@ export type MarketKey =
   | "DOUBLE_CHANCE"
   | "COMBO_DC_O15"
   | "TEAM_O15"
-  | "CORNERS_O85";
+  | "CORNERS_O85"
+  | "HOME_WIN"
+  | "HT_O05";
 
 export interface ActualMatchResult {
   fthg: number;
@@ -116,6 +118,8 @@ export interface ParlayRecommendation {
   minCombinedOdds: number;
   combinedRealOdds: number | null;
   suggestedStakeUnits: number;
+  timeBlockLabel?: string;
+  spanMinutes?: number;
 }
 
 export interface AnalyzeSlateInput {
@@ -130,6 +134,7 @@ export interface AnalyzeSlateResponse {
   candidates: CandidateResult[];
   parlay: ParlayRecommendation | null;
   valueParlay: ParlayRecommendation | null;
+  valueParlays: ParlayRecommendation[];
   sourceInfo: string;
   nextAvailableDate: string | null;
   generatedAt: string;
@@ -208,6 +213,7 @@ export function assembleMatchFeatures(params: {
   const nbO65 = probOverNegBin(lambdaCornersTotal, lg.nbDispersion, 6.5);
   const nbO75 = probOverNegBin(lambdaCornersTotal, lg.nbDispersion, 7.5);
   const nbO85 = probOverNegBin(lambdaCornersTotal, lg.nbDispersion, 8.5);
+  const pHtO05 = clamp(1.0 - Math.exp(-0.45 * (lambdaHome + lambdaAway)), 0.001, 0.999);
 
   const sotExpected =
     (home.sotFor / Math.max(1.0, lg.avgHomeSot)) *
@@ -250,6 +256,8 @@ export function assembleMatchFeatures(params: {
     DCX2_O15: [safeLogit(dc.pX2O15), ...baseTail],
     HOME_O15: [safeLogit(dc.pHomeO15), ...baseTail],
     CORNERS_O85: [safeLogit(nbO85), ...baseTail],
+    HOME_WIN: [safeLogit(dc.pH), ...baseTail],
+    HT_O05: [safeLogit(pHtO05), ...baseTail],
   };
 
   return {
@@ -679,10 +687,98 @@ export function evaluateMatchFromSnapshot(params: {
       stakeUnits: c85Tier === "TIER_S" ? 2.0 : c85Tier === "TIER_A" ? 1.0 : 0,
       note:
         c85Tier === "TIER_S"
-          ? "Mercado 1.50+ Tier S: Córneres >8.5 en partido de volumen extremo (~74.8%+)."
+          ? "Mercado 1.50+ Tier S: Córneres >8.5 en partido de volumen extremo (~74.3%+)."
           : c85Tier === "TIER_A"
-            ? "Mercado 1.50+ Tier A: Córneres >8.5 (~71.3% acierto en temp. 26/27)."
+            ? "Mercado 1.50+ Tier A: Córneres >8.5 (~69.2% acierto en temp. 26/27)."
             : "Proyección de córneres insuficiente para escalar a Over 8.5.",
+    },
+  });
+
+  // 8. MERCADO CUOTA 1.50+: VICTORIA LOCAL 1X2 (Cuota Real 1.42–2.30)
+  const oddsH = params.odds.oddsH || 0;
+  const hwProb = probs.HOME_WIN;
+  const hwMc = mc.pHomeWin;
+  const hwKelly = calculateKellyStake(hwProb, oddsH, 0.25, 0.02);
+  let hwTier: Tier = "NO_BET";
+  if (oddsH >= 1.42 && oddsH <= 2.3) {
+    if (hwProb >= 0.60 && hwMc >= 0.56) hwTier = "TIER_S";
+    else if (hwProb >= 0.56 && hwMc >= 0.52) hwTier = "TIER_A";
+  }
+  if (!hasSolidSample && hwTier === "TIER_S") hwTier = "TIER_A";
+  const hwStake =
+    hwTier !== "NO_BET"
+      ? hwKelly.stakeUnits > 0
+        ? hwKelly.stakeUnits
+        : hwTier === "TIER_S"
+          ? 2.0
+          : 1.0
+      : 0;
+
+  picks.push({
+    tier: hwTier,
+    market: "HOME_WIN",
+    selection: "HOME",
+    line: 0,
+    probability: Number(hwProb.toFixed(4)),
+    mcProbability: hwMc,
+    odds: oddsH,
+    fairOdds: hwKelly.fairOdds,
+    minOdds: hwKelly.minOddsForEdge,
+    ev: hwKelly.ev,
+    stakeUnits: hwStake,
+    decision: hwTier !== "NO_BET" ? "BET" : "NO_BET",
+    threshold: 0.56,
+    stability,
+    reasoning: {
+      lambdaHome: Number(assembled.lambdaHome.toFixed(2)),
+      lambdaAway: Number(assembled.lambdaAway.toFixed(2)),
+      oddsH,
+      teamStats: sharedTeamStats,
+      stakeUnits: hwStake,
+      note:
+        oddsH < 1.42
+          ? oddsH > 1.01
+            ? `Cuota local (${oddsH}) por debajo de 1.42; demasiado baja para Victoria Directa.`
+            : "Esperando cuota 1X2 real para evaluar Victoria Local."
+          : hwTier !== "NO_BET"
+            ? `Victoria Local sólida (${(hwProb * 100).toFixed(1)}%) con cuota real ${oddsH}.`
+            : "Probabilidad local insuficiente para victoria directa.",
+    },
+  });
+
+  // 9. MERCADO: GOL EN EL 1ER TIEMPO (HT_O05 — Cobro en 45 min)
+  const htProb = probs.HT_O05;
+  const htMc = mc.pHtO05;
+  let htTier: Tier = "NO_BET";
+  if (htProb >= 0.80 && htMc >= 0.76) htTier = "TIER_S";
+  else if (htProb >= 0.76 && htMc >= 0.72) htTier = "TIER_A";
+  if (!hasSolidSample && htTier === "TIER_S") htTier = "TIER_A";
+  const htKelly = calculateKellyStake(htProb, 0, 0.25, 0.03);
+  picks.push({
+    tier: htTier,
+    market: "HT_O05",
+    selection: "OVER",
+    line: 0.5,
+    probability: Number(htProb.toFixed(4)),
+    mcProbability: htMc,
+    odds: 0,
+    fairOdds: htKelly.fairOdds,
+    minOdds: htKelly.minOddsForEdge,
+    ev: 0,
+    stakeUnits: htTier === "TIER_S" ? 2.0 : htTier === "TIER_A" ? 1.0 : 0,
+    decision: htTier !== "NO_BET" ? "BET" : "NO_BET",
+    threshold: 0.76,
+    stability,
+    reasoning: {
+      lambdaTotal: Number((assembled.lambdaHome + assembled.lambdaAway).toFixed(2)),
+      teamStats: sharedTeamStats,
+      stakeUnits: htTier === "TIER_S" ? 2.0 : htTier === "TIER_A" ? 1.0 : 0,
+      note:
+        htTier === "TIER_S"
+          ? "Gol 1er Tiempo Tier S (~83.8% histórico en temp. 26/27). Se resuelve en 45 min."
+          : htTier === "TIER_A"
+            ? "Gol 1er Tiempo Tier A (~76.8%+ histórico en temp. 26/27)."
+            : "Ritmo esperado en 1er tiempo por debajo del umbral (76%).",
     },
   });
 
@@ -761,7 +857,25 @@ export function buildRecommendedParlay(candidates: CandidateResult[]): ParlayRec
     return b.leg.probability - a.leg.probability;
   });
 
-  const legs = rankedPool.slice(0, 3).map((item) => item.leg);
+  // Priorizar partidos cercanos en horario (<= 120 min) cuando existan suficientes piernas
+  const anchor = rankedPool[0];
+  const anchorMs = new Date(anchor.leg.kickoffUtc).getTime();
+  const nearAnchor = rankedPool.filter((item) => {
+    const ms = new Date(item.leg.kickoffUtc).getTime();
+    return Number.isFinite(anchorMs) && Number.isFinite(ms)
+      ? Math.abs(ms - anchorMs) <= 120 * 60000
+      : true;
+  });
+  const chosenSource = nearAnchor.length >= 2 ? nearAnchor : rankedPool;
+  const legs = chosenSource.slice(0, 3).map((item) => item.leg);
+  const legTimes = legs
+    .map((l) => new Date(l.kickoffUtc).getTime())
+    .filter((t) => Number.isFinite(t));
+  const spanMinutes =
+    legTimes.length >= 2
+      ? Math.round((Math.max(...legTimes) - Math.min(...legTimes)) / 60000)
+      : 0;
+
   const combinedProbability = Number(
     legs.reduce((acc, l) => acc * l.probability, 1.0).toFixed(4)
   );
@@ -779,23 +893,32 @@ export function buildRecommendedParlay(candidates: CandidateResult[]): ParlayRec
     minCombinedOdds,
     combinedRealOdds,
     suggestedStakeUnits: combinedProbability >= 0.65 ? 1.5 : 1.0,
+    spanMinutes,
   };
 }
 
 /**
- * Construye una Doble Rentable de exactamente 2 partidos independientes (cuota objetivo >= 2.25)
- * usando únicamente los mercados calibrados para cuotas 1.50+.
+ * Agrupa dobles rentables de exactamente 2 partidos independientes por bloques horarios (<= 90 min),
+ * priorizando picks que realmente paguen >= 1.50 en casas (evitando favoritos < 1.32 en combos).
  */
-export function buildValueDoubleParlay(
+export function buildTimedValueDoubles(
   candidates: CandidateResult[]
-): ParlayRecommendation | null {
+): ParlayRecommendation[] {
   const VALUE_150_MARKETS = new Set<MarketKey>([
+    "HOME_WIN",
+    "GOALS_OU25",
     "COMBO_DC_O15",
     "TEAM_O15",
     "CORNERS_O85",
-    "GOALS_OU25",
+    "HT_O05",
   ]);
-  const rankedPool: Array<{ leg: ParlayLeg; solidSample: boolean; evScore: number }> = [];
+  const rankedPool: Array<{
+    leg: ParlayLeg;
+    solidSample: boolean;
+    evScore: number;
+    realistic150: boolean;
+    kickoffMs: number;
+  }> = [];
 
   for (const c of candidates) {
     const eligible = c.picks.filter(
@@ -806,7 +929,23 @@ export function buildValueDoubleParlay(
     );
     if (eligible.length === 0) continue;
 
+    const isRealistic = (p: PickResult) => {
+      if (
+        (p.market === "COMBO_DC_O15" && p.selection === "1X_O15") ||
+        p.market === "TEAM_O15"
+      ) {
+        if (c.marketOdds.oddsH !== null && c.marketOdds.oddsH < 1.32) return false;
+      }
+      if (p.market === "COMBO_DC_O15" && p.selection === "X2_O15") {
+        if (c.marketOdds.oddsA !== null && c.marketOdds.oddsA < 1.32) return false;
+      }
+      return true;
+    };
+
     eligible.sort((a, b) => {
+      const ra = isRealistic(a) ? 1 : 0;
+      const rb = isRealistic(b) ? 1 : 0;
+      if (ra !== rb) return rb - ra;
       if (a.tier !== b.tier) return a.tier === "TIER_S" ? -1 : 1;
       if (a.ev !== b.ev && (a.ev > 0 || b.ev > 0)) return b.ev - a.ev;
       return b.probability - a.probability;
@@ -817,10 +956,13 @@ export function buildValueDoubleParlay(
     const solidSample = Boolean(
       ts && ts.homeSampleCount >= 10 && ts.awaySampleCount >= 10
     );
+    const ms = new Date(c.kickoffUtc).getTime();
 
     rankedPool.push({
       solidSample,
       evScore: top.ev,
+      realistic150: isRealistic(top),
+      kickoffMs: Number.isFinite(ms) ? ms : 0,
       leg: {
         fixtureId: c.fixtureId,
         leagueName: c.leagueName,
@@ -838,9 +980,10 @@ export function buildValueDoubleParlay(
     });
   }
 
-  if (rankedPool.length < 2) return null;
+  if (rankedPool.length < 2) return [];
 
   rankedPool.sort((a, b) => {
+    if (a.realistic150 !== b.realistic150) return a.realistic150 ? -1 : 1;
     if (a.leg.tier !== b.leg.tier) return a.leg.tier === "TIER_S" ? -1 : 1;
     if (a.solidSample !== b.solidSample) return a.solidSample ? -1 : 1;
     if (a.evScore !== b.evScore && (a.evScore > 0 || b.evScore > 0)) {
@@ -849,27 +992,72 @@ export function buildValueDoubleParlay(
     return b.leg.probability - a.leg.probability;
   });
 
-  const legs = rankedPool.slice(0, 2).map((item) => item.leg);
-  const combinedProbability = Number(
-    legs.reduce((acc, l) => acc * l.probability, 1.0).toFixed(4)
-  );
-  const fairCombinedOdds = Number((1.0 / Math.max(0.01, combinedProbability)).toFixed(2));
-  const minCombinedOdds = Number(
-    Math.max(2.25, 1.05 / Math.max(0.01, combinedProbability)).toFixed(2)
-  );
-  const allHaveOdds = legs.every((l) => l.odds > 1.01);
-  const combinedRealOdds = allHaveOdds
-    ? Number(legs.reduce((acc, l) => acc * l.odds, 1.0).toFixed(2))
-    : null;
+  const usedIndices = new Set<number>();
+  const rawBlocks: Array<{ legs: [typeof rankedPool[0], typeof rankedPool[0]]; spanMinutes: number; startMs: number }> = [];
 
-  return {
-    legs,
-    combinedProbability,
-    fairCombinedOdds,
-    minCombinedOdds,
-    combinedRealOdds,
-    suggestedStakeUnits: combinedProbability >= 0.55 ? 1.5 : 1.0,
-  };
+  for (let i = 0; i < rankedPool.length && rawBlocks.length < 4; i++) {
+    if (usedIndices.has(i)) continue;
+    const anchor = rankedPool[i];
+    let partnerIdx = -1;
+
+    for (const maxDiffMin of [90, 120]) {
+      for (let j = i + 1; j < rankedPool.length; j++) {
+        if (usedIndices.has(j)) continue;
+        if (rankedPool[j].leg.fixtureId === anchor.leg.fixtureId) continue;
+        const diffMin = Math.abs(rankedPool[j].kickoffMs - anchor.kickoffMs) / 60000;
+        if (diffMin <= maxDiffMin) {
+          partnerIdx = j;
+          break;
+        }
+      }
+      if (partnerIdx !== -1) break;
+    }
+
+    if (partnerIdx === -1) continue;
+    usedIndices.add(i);
+    usedIndices.add(partnerIdx);
+    const partner = rankedPool[partnerIdx];
+    const spanMinutes = Math.round(Math.abs(anchor.kickoffMs - partner.kickoffMs) / 60000);
+    rawBlocks.push({
+      legs: [anchor, partner],
+      spanMinutes,
+      startMs: Math.min(anchor.kickoffMs, partner.kickoffMs),
+    });
+  }
+
+  rawBlocks.sort((a, b) => a.startMs - b.startMs);
+
+  return rawBlocks.map((blk, idx) => {
+    const legs = blk.legs.map((item) => item.leg);
+    const combinedProbability = Number(
+      legs.reduce((acc, l) => acc * l.probability, 1.0).toFixed(4)
+    );
+    const fairCombinedOdds = Number((1.0 / Math.max(0.01, combinedProbability)).toFixed(2));
+    const minCombinedOdds = Number(
+      Math.max(2.25, 1.05 / Math.max(0.01, combinedProbability)).toFixed(2)
+    );
+    const allHaveOdds = legs.every((l) => l.odds > 1.01);
+    const combinedRealOdds = allHaveOdds
+      ? Number(legs.reduce((acc, l) => acc * l.odds, 1.0).toFixed(2))
+      : null;
+
+    return {
+      legs,
+      combinedProbability,
+      fairCombinedOdds,
+      minCombinedOdds,
+      combinedRealOdds,
+      suggestedStakeUnits: combinedProbability >= 0.55 ? 1.5 : 1.0,
+      timeBlockLabel: `Bloque ${idx + 1}`,
+      spanMinutes: blk.spanMinutes,
+    };
+  });
+}
+
+export function buildValueDoubleParlay(
+  candidates: CandidateResult[]
+): ParlayRecommendation | null {
+  return buildTimedValueDoubles(candidates)[0] || null;
 }
 
 async function persistSingleCandidate(c: CandidateResult): Promise<void> {
@@ -1177,6 +1365,7 @@ export async function analyzeSlate(input: AnalyzeSlateInput = {}): Promise<Analy
       candidates: [],
       parlay: null,
       valueParlay: null,
+      valueParlays: [],
       sourceInfo,
       nextAvailableDate: nextAfter,
       generatedAt: new Date().toISOString(),
@@ -1241,12 +1430,14 @@ export async function analyzeSlate(input: AnalyzeSlateInput = {}): Promise<Analy
   }
 
   const parlay = buildRecommendedParlay(candidates);
-  const valueParlay = buildValueDoubleParlay(candidates);
+  const valueParlays = buildTimedValueDoubles(candidates);
+  const valueParlay = valueParlays[0] || null;
 
   return {
     candidates,
     parlay,
     valueParlay,
+    valueParlays,
     sourceInfo,
     nextAvailableDate: null,
     generatedAt: new Date().toISOString(),

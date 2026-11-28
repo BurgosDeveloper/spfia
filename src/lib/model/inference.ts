@@ -17,7 +17,9 @@ export type TargetName =
   | "DC1X_O15"
   | "DCX2_O15"
   | "HOME_O15"
-  | "CORNERS_O85";
+  | "CORNERS_O85"
+  | "HOME_WIN"
+  | "HT_O05";
 
 export interface LeagueParams {
   avgHomeGoals: number;
@@ -169,6 +171,8 @@ export function predictMatchProbabilities(
   const DCX2_O15 = predictSingleTarget("DCX2_O15", featuresByTarget.DCX2_O15, hasMarketOdds);
   const HOME_O15 = predictSingleTarget("HOME_O15", featuresByTarget.HOME_O15, hasMarketOdds);
   const CORNERS_O85 = predictSingleTarget("CORNERS_O85", featuresByTarget.CORNERS_O85, hasMarketOdds);
+  const HOME_WIN = predictSingleTarget("HOME_WIN", featuresByTarget.HOME_WIN, hasMarketOdds);
+  const HT_O05 = predictSingleTarget("HT_O05", featuresByTarget.HT_O05, hasMarketOdds);
 
   return {
     GOALS_O15: Number(GOALS_O15.toFixed(6)),
@@ -182,5 +186,7 @@ export function predictMatchProbabilities(
     DCX2_O15: Number(DCX2_O15.toFixed(6)),
     HOME_O15: Number(HOME_O15.toFixed(6)),
     CORNERS_O85: Number(CORNERS_O85.toFixed(6)),
+    HOME_WIN: Number(HOME_WIN.toFixed(6)),
+    HT_O05: Number(HT_O05.toFixed(6)),
   };
 }

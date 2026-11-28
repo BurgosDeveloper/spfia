@@ -58,6 +58,8 @@ export interface MonteCarloResult {
   p1XO15: number;
   pX2O15: number;
   pHomeO15: number;
+  pHomeWin: number;
+  pHtO05: number;
   pJointO15AndC65: number;
   pJointO15AndC75: number;
   expectedGoals: number;
@@ -145,6 +147,7 @@ export function simulateMatchMonteCarlo(params: {
   let cnt1XO15 = 0;
   let cntX2O15 = 0;
   let cntHomeO15 = 0;
+  let cntHomeWin = 0;
   let cntJoint65 = 0;
   let cntJoint75 = 0;
   let sumGoalsSim = 0;
@@ -201,9 +204,12 @@ export function simulateMatchMonteCarlo(params: {
     if (gCell.h >= gCell.a && isO15) cnt1XO15++;
     if (gCell.a >= gCell.h && isO15) cntX2O15++;
     if (gCell.h >= 2) cntHomeO15++;
+    if (gCell.h > gCell.a) cntHomeWin++;
     if (isO15 && isC65) cntJoint65++;
     if (isO15 && isC75) cntJoint75++;
   }
+
+  const pHtO05 = clamp(1.0 - Math.exp(-0.45 * (lambdaHome + lambdaAway)), 0.001, 0.999);
 
   return {
     simulations,
@@ -218,6 +224,8 @@ export function simulateMatchMonteCarlo(params: {
     p1XO15: Number((cnt1XO15 / simulations).toFixed(4)),
     pX2O15: Number((cntX2O15 / simulations).toFixed(4)),
     pHomeO15: Number((cntHomeO15 / simulations).toFixed(4)),
+    pHomeWin: Number((cntHomeWin / simulations).toFixed(4)),
+    pHtO05: Number(pHtO05.toFixed(4)),
     pJointO15AndC65: Number((cntJoint65 / simulations).toFixed(4)),
     pJointO15AndC75: Number((cntJoint75 / simulations).toFixed(4)),
     expectedGoals: Number((sumGoalsSim / simulations).toFixed(2)),

@@ -35,13 +35,22 @@ function formatMarketLabel(pick: PickResult): string {
         : "Combo 1.50+: X2 + Over 1.5 Goles";
     case "TEAM_O15":
       return "Equipo 1.50+: Local Over 1.5 Goles";
+    case "HOME_WIN":
+      return "1X2 1.50+: Gana Local";
+    case "HT_O05":
+      return "1er Tiempo: Más de 0.5 Goles (45 min)";
     case "DOUBLE_CHANCE":
       return `Doble Oportunidad: ${pick.selection}`;
   }
 }
 
 function MarketIcon({ market }: { market: MarketKey }) {
-  if (market === "GOALS_O15" || market === "GOALS_OU25" || market === "TEAM_O15") {
+  if (
+    market === "GOALS_O15" ||
+    market === "GOALS_OU25" ||
+    market === "TEAM_O15" ||
+    market === "HT_O05"
+  ) {
     return (
       <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-[#004D98] to-[#002f60] text-[#EDBB00] border border-blue-400/30 shadow shrink-0">
         <IoFootball className="w-5 h-5" />
@@ -101,10 +110,12 @@ export default function CandidateCard({
     if (activeFilter === "VALUE_150") {
       return (
         p.decision === "BET" &&
-        (p.market === "COMBO_DC_O15" ||
+        (p.market === "HOME_WIN" ||
+          p.market === "COMBO_DC_O15" ||
           p.market === "TEAM_O15" ||
           p.market === "CORNERS_O85" ||
-          p.market === "GOALS_OU25")
+          p.market === "GOALS_OU25" ||
+          p.market === "HT_O05")
       );
     }
     if (activeFilter === "VALUE") return p.decision === "BET";
@@ -113,11 +124,18 @@ export default function CandidateCard({
         p.market === "GOALS_O15" ||
         p.market === "GOALS_OU25" ||
         p.market === "TEAM_O15" ||
-        p.market === "COMBO_DC_O15"
+        p.market === "COMBO_DC_O15" ||
+        p.market === "HT_O05"
       );
     }
     if (activeFilter === "CORNERS") return p.market === "CORNERS_OU" || p.market === "CORNERS_O85";
-    if (activeFilter === "DC") return p.market === "DOUBLE_CHANCE" || p.market === "COMBO_DC_O15";
+    if (activeFilter === "DC") {
+      return (
+        p.market === "DOUBLE_CHANCE" ||
+        p.market === "COMBO_DC_O15" ||
+        p.market === "HOME_WIN"
+      );
+    }
     return true;
   });
 
@@ -251,13 +269,15 @@ export default function CandidateCard({
                       {formatMarketLabel(pick)}
                     </span>
                     <TierBadge pick={pick} />
-                    {(pick.market === "GOALS_OU25" ||
+                    {(pick.market === "HOME_WIN" ||
+                      pick.market === "GOALS_OU25" ||
                       pick.market === "COMBO_DC_O15" ||
                       pick.market === "TEAM_O15" ||
-                      pick.market === "CORNERS_O85") &&
+                      pick.market === "CORNERS_O85" ||
+                      pick.market === "HT_O05") &&
                       pick.decision === "BET" && (
                         <span className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-200 border border-amber-400/40 text-[10px] font-black">
-                          🔥 Cuota 1.50+
+                          {pick.market === "HT_O05" ? "⚡ Gol 45 min" : "🔥 Cuota 1.50+"}
                         </span>
                       )}
                   </div>

@@ -66,6 +66,8 @@ export interface HistoricalMatchRow {
   awayTeam: string;
   fthg: number;
   ftag: number;
+  hthg?: number | null;
+  htag?: number | null;
   hc: number | null;
   ac: number | null;
   hs: number | null;
@@ -443,6 +445,8 @@ async function fetchSeasonCsv(season: string, divCode: string): Promise<Historic
       awayTeam,
       fthg: Math.round(fthg),
       ftag: Math.round(ftag),
+      hthg: numOrNull(r.HTHG),
+      htag: numOrNull(r.HTAG),
       hc: numOrNull(r.HC),
       ac: numOrNull(r.AC),
       hs: numOrNull(r.HS),
@@ -748,6 +752,8 @@ export interface EspnFinishedMatch {
   awayTeamId: string;
   fthg: number;
   ftag: number;
+  hthg?: number | null;
+  htag?: number | null;
   hc: number | null;
   ac: number | null;
 }

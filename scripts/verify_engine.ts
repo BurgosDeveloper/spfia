@@ -28,6 +28,8 @@ async function main() {
     "DCX2_O15",
     "HOME_O15",
     "CORNERS_O85",
+    "HOME_WIN",
+    "HT_O05",
   ];
 
   for (const chk of checks) {

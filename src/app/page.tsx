@@ -44,6 +44,7 @@ export default function Home() {
   const [candidates, setCandidates] = useState<CandidateResult[]>([]);
   const [parlay, setParlay] = useState<ParlayRecommendation | null>(null);
   const [valueParlay, setValueParlay] = useState<ParlayRecommendation | null>(null);
+  const [valueParlays, setValueParlays] = useState<ParlayRecommendation[]>([]);
   const [sourceInfo, setSourceInfo] = useState("");
   const [nextAvailableDate, setNextAvailableDate] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<PickFilter>("VALUE_150");
@@ -116,7 +117,13 @@ export default function Home() {
         if (res.ok && data.ok) {
           setCandidates(data.candidates || []);
           setParlay(data.parlay || null);
-          setValueParlay(data.valueParlay || null);
+          const timedList: ParlayRecommendation[] = Array.isArray(data.valueParlays)
+            ? data.valueParlays
+            : data.valueParlay
+              ? [data.valueParlay]
+              : [];
+          setValueParlays(timedList);
+          setValueParlay(timedList[0] || null);
           setSourceInfo(data.sourceInfo || "");
           setNextAvailableDate(data.nextAvailableDate || null);
         } else {
@@ -179,10 +186,12 @@ export default function Home() {
   const tierACount = allPicks.filter((p) => p.tier === "TIER_A").length;
   const valueMatches = candidates.filter((c) => c.picks.some((p) => p.decision === "BET"));
   const isValue150Market = (market: string) =>
+    market === "HOME_WIN" ||
     market === "COMBO_DC_O15" ||
     market === "TEAM_O15" ||
     market === "CORNERS_O85" ||
-    market === "GOALS_OU25";
+    market === "GOALS_OU25" ||
+    market === "HT_O05";
   const value150Matches = candidates.filter((c) =>
     c.picks.some((p) => p.decision === "BET" && isValue150Market(p.market))
   );
@@ -377,100 +386,155 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Doble Rentable 2.25+ (2 Partidos · Cuota >= 1.50 c/u) */}
-              {valueParlay && (
-                <section className="clay-glass-card-active p-4 md:p-5 border border-[#EDBB00]/50">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3.5">
+              {/* Dobles Rentables por Bloque Horario (2 Partidos · Misma Franja <= 90 min) */}
+              {valueParlays.length > 0 && (
+                <section className="clay-glass-card-active p-4 md:p-5 border border-[#EDBB00]/50 space-y-4">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                     <div className="flex items-start gap-2.5">
                       <IoSparkles className="w-6 h-6 text-[#EDBB00] shrink-0 mt-0.5" />
                       <div>
                         <h2 className="text-base md:text-lg font-black text-white">
-                          🚀 Doble Rentable 2.25+ ({valueParlay.legs.length} Partidos &bull; Cuota &ge; 1.50 c/u)
+                          🚀 Dobles Rentables por Bloque Horario (2 Partidos &bull; Cuota &ge; 2.25)
                         </h2>
                         <p className="text-xs text-slate-300 mt-0.5">
-                          Seguridad conjunta:{" "}
-                          <strong className="text-white">
-                            {(valueParlay.combinedProbability * 100).toFixed(1)}%
-                          </strong>{" "}
-                          &bull; Cuota rentable mínima:{" "}
-                          <strong className="text-[#EDBB00]">&ge; {valueParlay.minCombinedOdds}</strong>
+                          Agrupadas por franja horaria (&le; 90 min entre partidos) para cobrar rápido sin quedar regados todo el día.
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 bg-slate-950/75 px-3 py-2 rounded-xl border border-slate-800 self-start md:self-auto">
-                      <span className="text-[11px] text-slate-400 font-bold">
-                        Cuota en casa:
-                      </span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder={`${valueParlay.minCombinedOdds}`}
-                        value={valueParlayHouseOdds}
-                        onChange={(e) => setValueParlayHouseOdds(e.target.value)}
-                        className="w-16 px-2 py-1 text-xs font-bold bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-[#EDBB00]"
-                      />
-                      {valueParlayEv !== null && (
-                        <span
-                          className={`text-xs font-black ${
-                            valueParlayEv > 0 ? "text-emerald-400" : "text-rose-400"
-                          }`}
-                        >
-                          {valueParlayEv > 0
-                            ? `✅ +${(valueParlayEv * 100).toFixed(1)}% EV`
-                            : `⚠️ Pide ≥ ${valueParlay.minCombinedOdds}`}
+                    {valueParlay && (
+                      <div className="flex items-center gap-2 bg-slate-950/75 px-3 py-2 rounded-xl border border-slate-800 self-start md:self-auto">
+                        <span className="text-[11px] text-slate-400 font-bold">
+                          Cuota Bloque 1:
                         </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                    {valueParlay.legs.map((leg, i) => (
-                      <div
-                        key={i}
-                        className="p-3 rounded-2xl bg-slate-950/75 border border-[#EDBB00]/30 text-xs space-y-1"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-blue-300 font-bold truncate">
-                            {leg.leagueName} &bull;{" "}
-                            {new Date(leg.kickoffUtc).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder={`${valueParlay.minCombinedOdds}`}
+                          value={valueParlayHouseOdds}
+                          onChange={(e) => setValueParlayHouseOdds(e.target.value)}
+                          className="w-16 px-2 py-1 text-xs font-bold bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-[#EDBB00]"
+                        />
+                        {valueParlayEv !== null && (
+                          <span
+                            className={`text-xs font-black ${
+                              valueParlayEv > 0 ? "text-emerald-400" : "text-rose-400"
+                            }`}
+                          >
+                            {valueParlayEv > 0
+                              ? `✅ +${(valueParlayEv * 100).toFixed(1)}% EV`
+                              : `⚠️ Pide ≥ ${valueParlay.minCombinedOdds}`}
                           </span>
-                          <span className="text-[10px] font-black text-[#EDBB00] shrink-0">
-                            {leg.tier === "TIER_S" ? "💎 TIER S" : "🟢 TIER A"}
-                          </span>
-                        </div>
-                        <div className="font-black text-white text-sm">{leg.matchName}</div>
-                        <div className="text-[#EDBB00] font-black">
-                          {leg.market === "COMBO_DC_O15"
-                            ? leg.selection === "1X_O15"
-                              ? "1X + Over 1.5 Goles"
-                              : "X2 + Over 1.5 Goles"
-                            : leg.market === "TEAM_O15"
-                              ? "Local Over 1.5 Goles"
-                              : leg.market === "CORNERS_O85"
-                                ? "Córneres Over 8.5"
-                                : `${leg.selection} ${leg.line} Goles`}
-                        </div>
-                        <div className="text-slate-400">
-                          Prob:{" "}
-                          <strong className="text-white">
-                            {(leg.probability * 100).toFixed(1)}%
-                          </strong>{" "}
-                          &bull; Cuota mínima:{" "}
-                          <strong className="text-emerald-300">&ge; {leg.minOdds}</strong>
-                        </div>
+                        )}
                       </div>
-                    ))}
+                    )}
                   </div>
 
-                  <div className="mt-3 pt-2.5 border-t border-white/10 text-[11px] text-slate-400 flex items-center gap-1.5">
+                  <div className="space-y-3">
+                    {valueParlays.map((blk, bIdx) => {
+                      const times = blk.legs.map((l) =>
+                        new Date(l.kickoffUtc).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      );
+                      const spanLabel =
+                        blk.spanMinutes !== undefined
+                          ? blk.spanMinutes === 0
+                            ? "⏱️ Misma hora exacta"
+                            : `⏱️ Dif. ${blk.spanMinutes} min`
+                          : "";
+                      return (
+                        <div
+                          key={bIdx}
+                          className="p-3.5 rounded-2xl bg-slate-950/60 border border-[#EDBB00]/25 space-y-2.5"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded-lg bg-[#EDBB00]/20 text-[#EDBB00] font-black">
+                                {blk.timeBlockLabel || `Bloque ${bIdx + 1}`} &bull; {times[0]}
+                                {times[1] && times[1] !== times[0] ? ` – ${times[1]}` : ""}
+                              </span>
+                              {spanLabel && (
+                                <span className="text-[11px] font-bold text-emerald-300">
+                                  {spanLabel}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-slate-300">
+                              Prob:{" "}
+                              <strong className="text-white">
+                                {(blk.combinedProbability * 100).toFixed(1)}%
+                              </strong>{" "}
+                              &bull; Cuota mín:{" "}
+                              <strong className="text-[#EDBB00]">&ge; {blk.minCombinedOdds}</strong>
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                            {blk.legs.map((leg, i) => (
+                              <div
+                                key={i}
+                                className="p-3 rounded-xl bg-slate-900/75 border border-white/10 text-xs space-y-1"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[10px] text-blue-300 font-bold truncate">
+                                    {leg.leagueName} &bull;{" "}
+                                    {new Date(leg.kickoffUtc).toLocaleTimeString([], {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </span>
+                                  <span className="text-[10px] font-black text-[#EDBB00] shrink-0">
+                                    {leg.tier === "TIER_S" ? "💎 TIER S" : "🟢 TIER A"}
+                                  </span>
+                                </div>
+                                <div className="font-black text-white text-sm">{leg.matchName}</div>
+                                <div className="text-[#EDBB00] font-black">
+                                  {leg.market === "COMBO_DC_O15"
+                                    ? leg.selection === "1X_O15"
+                                      ? "1X + Over 1.5 Goles"
+                                      : "X2 + Over 1.5 Goles"
+                                    : leg.market === "TEAM_O15"
+                                      ? "Local Over 1.5 Goles"
+                                      : leg.market === "HOME_WIN"
+                                        ? "Gana Local (1X2)"
+                                        : leg.market === "HT_O05"
+                                          ? "Gol 1er Tiempo (+0.5 1T)"
+                                          : leg.market === "CORNERS_O85"
+                                            ? "Córneres Over 8.5"
+                                            : `${leg.selection} ${leg.line} Goles`}
+                                </div>
+                                <div className="text-slate-400">
+                                  Prob:{" "}
+                                  <strong className="text-white">
+                                    {(leg.probability * 100).toFixed(1)}%
+                                  </strong>{" "}
+                                  {leg.odds > 1.01 ? (
+                                    <>
+                                      &bull; Cuota real:{" "}
+                                      <strong className="text-emerald-300">{leg.odds}</strong>
+                                    </>
+                                  ) : (
+                                    <>
+                                      &bull; Mín:{" "}
+                                      <strong className="text-emerald-300">&ge; {leg.minOdds}</strong>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="pt-2 border-t border-white/10 text-[11px] text-slate-400 flex items-center gap-1.5">
                     <IoShieldCheckmark className="w-4 h-4 text-[#EDBB00] shrink-0" />
                     <span>
-                      Modo Rentabilidad: solo 2 partidos independientes pagando &ge; 1.50 c/u (&ge; 2.25
-                      juntos). Si TriunfoBet paga menos de 1.50 en una pata, NO fuerces la apuesta.
+                      Modo Rentabilidad por Horarios: juega máximo 3%–5% de tu banca por bloque.
+                      Si TriunfoBet paga menos de 1.50 en una pata, NO fuerces el bloque.
                     </span>
                   </div>
                 </section>
@@ -693,12 +757,12 @@ export default function Home() {
                     val: historyData.evSummary.TIERS?.HOME_O15_S,
                   },
                   {
-                    label: "Córneres >8.5 [1.50+] (S)",
-                    val: historyData.evSummary.TIERS?.CORNERS_O85_S,
+                    label: "Gana Local 1.42+ (S)",
+                    val: historyData.evSummary.TIERS?.HOME_WIN_S,
                   },
                   {
-                    label: "1X/X2 + O1.5 [1.50+] (A)",
-                    val: historyData.evSummary.TIERS?.COMBO_DC_O15_A,
+                    label: "Gol 1er Tiempo (S)",
+                    val: historyData.evSummary.TIERS?.HT_O05_S,
                   },
                 ].map((item, idx) => (
                   <div

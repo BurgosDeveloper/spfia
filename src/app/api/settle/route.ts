@@ -166,6 +166,14 @@ export async function POST() {
       } else if (pick.market === "TEAM_O15") {
         if (pick.selection === "HOME_OVER") won = fthg >= 2;
         else if (pick.selection === "AWAY_OVER") won = ftag >= 2;
+      } else if (pick.market === "HOME_WIN") {
+        won = fthg > ftag;
+      } else if (pick.market === "HT_O05") {
+        if (ukMatch?.hthg !== null && ukMatch?.hthg !== undefined && ukMatch?.htag !== null && ukMatch?.htag !== undefined) {
+          won = ukMatch.hthg + ukMatch.htag >= 1;
+        } else if (fthg === 0 && ftag === 0) {
+          won = false;
+        }
       }
 
       if (won === null) {

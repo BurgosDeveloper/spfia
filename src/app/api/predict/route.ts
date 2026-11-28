@@ -33,6 +33,7 @@ export async function POST(req: Request) {
       candidates: result.candidates,
       parlay: result.parlay,
       valueParlay: result.valueParlay,
+      valueParlays: result.valueParlays,
       sourceInfo: result.sourceInfo,
       nextAvailableDate: result.nextAvailableDate,
       generatedAt: result.generatedAt,

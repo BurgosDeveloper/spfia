@@ -70,6 +70,8 @@ TARGETS = [
     "DCX2_O15",
     "HOME_O15",
     "CORNERS_O85",
+    "HOME_WIN",
+    "HT_O05",
 ]
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -298,6 +300,8 @@ class MatchRow:
     away: str
     fthg: int
     ftag: int
+    hthg: Optional[int]
+    htag: Optional[int]
     hc: Optional[float]
     ac: Optional[float]
     hs: Optional[float]
@@ -310,6 +314,7 @@ class MatchRow:
     p_mkt_a: Optional[float]
     p_mkt_o25: Optional[float]
     # Playable odds for backtest ROI
+    odds_h: Optional[float]
     odds_o25: Optional[float]
     odds_u25: Optional[float]
     odds_1x: Optional[float]
@@ -343,6 +348,8 @@ def load_all_matches() -> List[MatchRow]:
                 if not home or not away or dt is None or fthg is None or ftag is None:
                     continue
 
+                hthg_f = parse_float(r.get("HTHG"))
+                htag_f = parse_float(r.get("HTAG"))
                 hc = parse_float(r.get("HC"))
                 ac = parse_float(r.get("AC"))
                 hs = parse_float(r.get("HS"))
@@ -385,6 +392,8 @@ def load_all_matches() -> List[MatchRow]:
                         away=away,
                         fthg=int(round(fthg)),
                         ftag=int(round(ftag)),
+                        hthg=int(round(hthg_f)) if hthg_f is not None else None,
+                        htag=int(round(htag_f)) if htag_f is not None else None,
                         hc=hc,
                         ac=ac,
                         hs=hs,
@@ -395,6 +404,7 @@ def load_all_matches() -> List[MatchRow]:
                         p_mkt_d=p_mkt_d,
                         p_mkt_a=p_mkt_a,
                         p_mkt_o25=p_mkt_o25,
+                        odds_h=bk_h,
                         odds_o25=bk_o25,
                         odds_u25=bk_u25,
                         odds_1x=o1x,
@@ -631,6 +641,7 @@ def build_features_chronologically(
             nb_o65 = prob_over_neg_bin(lam_c_tot, lg["nbDispersion"], 6.5)
             nb_o75 = prob_over_neg_bin(lam_c_tot, lg["nbDispersion"], 7.5)
             nb_o85 = prob_over_neg_bin(lam_c_tot, lg["nbDispersion"], 8.5)
+            p_ht05 = clamp(1.0 - math.exp(-0.45 * (lam_h + lam_a)), 0.001, 0.999)
 
             sot_exp = (
                 (h_sotf / max(1.0, lg["avgHomeSot"])) * (a_sota / max(1.0, lg["avgHomeSot"])) * lg["avgHomeSot"]
@@ -666,11 +677,15 @@ def build_features_chronologically(
                 "DCX2_O15": [safe_logit(dc["pX2O15"])] + base_tail,
                 "HOME_O15": [safe_logit(dc["pHomeO15"])] + base_tail,
                 "CORNERS_O85": [safe_logit(nb_o85)] + base_tail,
+                "HOME_WIN": [safe_logit(dc["pH"])] + base_tail,
+                "HT_O05": [safe_logit(p_ht05)] + base_tail,
             }
 
             tot_g = m.fthg + m.ftag
             has_corners = m.hc is not None and m.ac is not None
             tot_c = (m.hc + m.ac) if has_corners else None
+            has_ht = m.hthg is not None and m.htag is not None
+            tot_ht = (m.hthg + m.htag) if has_ht else None
 
             dataset.append(
                 {
@@ -687,6 +702,8 @@ def build_features_chronologically(
                         "DCX2_O15": dc["pX2O15"],
                         "HOME_O15": dc["pHomeO15"],
                         "CORNERS_O85": nb_o85,
+                        "HOME_WIN": dc["pH"],
+                        "HT_O05": p_ht05,
                     },
                     "labels": {
                         "GOALS_O15": 1 if tot_g > 1.5 else 0,
@@ -699,6 +716,8 @@ def build_features_chronologically(
                         "DCX2_O15": 1 if (m.ftag >= m.fthg and tot_g >= 2) else 0,
                         "HOME_O15": 1 if m.fthg >= 2 else 0,
                         "CORNERS_O85": (1 if tot_c >= 9 else 0) if tot_c is not None else None,
+                        "HOME_WIN": 1 if m.fthg > m.ftag else 0,
+                        "HT_O05": (1 if tot_ht >= 1 else 0) if tot_ht is not None else None,
                     },
                     "rawTeamStats": {
                         "h_gf": h_gf, "h_ga": h_ga, "h_cf": h_cf, "h_ca": h_ca,
@@ -1062,6 +1081,7 @@ def main() -> None:
     # Check GOALS_O15 & CORNERS tiers, plus GOALS_OU25 & DOUBLE_CHANCE EV+ betting ROI
     ou25_bets = []
     dc_bets = []
+    hw_bets = []
     tier_stats = {
         "GOALS_O15_S": [0, 0], "GOALS_O15_A": [0, 0],
         "CORNERS_O65_S": [0, 0], "CORNERS_O65_A": [0, 0],
@@ -1070,6 +1090,8 @@ def main() -> None:
         "COMBO_DC_O15_S": [0, 0], "COMBO_DC_O15_A": [0, 0],
         "HOME_O15_S": [0, 0], "HOME_O15_A": [0, 0],
         "CORNERS_O85_S": [0, 0], "CORNERS_O85_A": [0, 0],
+        "HOME_WIN_S": [0, 0],
+        "HT_O05_S": [0, 0], "HT_O05_A": [0, 0],
     }
 
     for row_idx, probs in test_probs_by_row.items():
@@ -1148,6 +1170,24 @@ def main() -> None:
                 tier_stats["CORNERS_O85_A"][0] += y_c85
                 tier_stats["CORNERS_O85_A"][1] += 1
 
+        if "HT_O05" in probs and labels["HT_O05"] is not None:
+            p_ht = probs["HT_O05"]
+            y_ht = labels["HT_O05"]
+            if p_ht >= 0.80:
+                tier_stats["HT_O05_S"][0] += y_ht
+                tier_stats["HT_O05_S"][1] += 1
+            elif p_ht >= 0.76:
+                tier_stats["HT_O05_A"][0] += y_ht
+                tier_stats["HT_O05_A"][1] += 1
+
+        if "HOME_WIN" in probs and m.odds_h and 1.42 <= m.odds_h <= 2.30:
+            p_hw = probs["HOME_WIN"]
+            if p_hw >= 0.60:
+                y_hw = labels["HOME_WIN"]
+                tier_stats["HOME_WIN_S"][0] += y_hw
+                tier_stats["HOME_WIN_S"][1] += 1
+                hw_bets.append((1.0, (m.odds_h - 1.0) if y_hw == 1 else -1.0, 1 if y_hw == 1 else 0, p_hw * m.odds_h - 1.0, p_hw, m.odds_h))
+
         # Real EV+ bets on GOALS_OU25
         if "GOALS_O25" in probs and m.odds_o25 and m.odds_u25:
             p_o = probs["GOALS_O25"]
@@ -1200,6 +1240,7 @@ def main() -> None:
     ev_summary = {
         "GOALS_OU25": summarize_bets(ou25_bets),
         "DOUBLE_CHANCE": summarize_bets(dc_bets),
+        "HOME_WIN": summarize_bets(hw_bets),
         "TIERS": {
             k: {"wins": v[0], "total": v[1], "hitRate": round(v[0] / max(1, v[1]), 4)}
             for k, v in tier_stats.items()
@@ -1232,7 +1273,7 @@ def main() -> None:
         )
 
     export_payload = {
-        "version": "5.0.0",
+        "version": "5.1.0",
         "trainedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "seasons": SEASONS,
         "trainCutoff": TRAIN_CUTOFF,
