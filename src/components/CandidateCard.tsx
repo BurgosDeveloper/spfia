@@ -15,7 +15,7 @@ import {
 
 interface CandidateCardProps {
   candidate: CandidateResult;
-  activeFilter: "VALUE" | "ALL" | "GOALS" | "CORNERS" | "DC";
+  activeFilter: "VALUE_150" | "VALUE" | "ALL" | "GOALS" | "CORNERS" | "DC";
   onOddsSaved?: () => void;
 }
 
@@ -27,20 +27,28 @@ function formatMarketLabel(pick: PickResult): string {
       return `Goles: ${pick.selection} 2.5`;
     case "CORNERS_OU":
       return `Córneres: Over ${pick.line}`;
+    case "CORNERS_O85":
+      return "Córneres 1.50+: Over 8.5";
+    case "COMBO_DC_O15":
+      return pick.selection === "1X_O15"
+        ? "Combo 1.50+: 1X + Over 1.5 Goles"
+        : "Combo 1.50+: X2 + Over 1.5 Goles";
+    case "TEAM_O15":
+      return "Equipo 1.50+: Local Over 1.5 Goles";
     case "DOUBLE_CHANCE":
       return `Doble Oportunidad: ${pick.selection}`;
   }
 }
 
 function MarketIcon({ market }: { market: MarketKey }) {
-  if (market === "GOALS_O15" || market === "GOALS_OU25") {
+  if (market === "GOALS_O15" || market === "GOALS_OU25" || market === "TEAM_O15") {
     return (
       <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-[#004D98] to-[#002f60] text-[#EDBB00] border border-blue-400/30 shadow shrink-0">
         <IoFootball className="w-5 h-5" />
       </div>
     );
   }
-  if (market === "CORNERS_OU") {
+  if (market === "CORNERS_OU" || market === "CORNERS_O85") {
     return (
       <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-[#A50044] to-[#600027] text-[#EDBB00] border border-rose-400/30 shadow shrink-0">
         <IoFlag className="w-5 h-5" />
@@ -90,10 +98,26 @@ export default function CandidateCard({
   const hasBet = candidate.picks.some((p) => p.decision === "BET");
 
   const displayedPicks = candidate.picks.filter((p) => {
+    if (activeFilter === "VALUE_150") {
+      return (
+        p.decision === "BET" &&
+        (p.market === "COMBO_DC_O15" ||
+          p.market === "TEAM_O15" ||
+          p.market === "CORNERS_O85" ||
+          p.market === "GOALS_OU25")
+      );
+    }
     if (activeFilter === "VALUE") return p.decision === "BET";
-    if (activeFilter === "GOALS") return p.market === "GOALS_O15" || p.market === "GOALS_OU25";
-    if (activeFilter === "CORNERS") return p.market === "CORNERS_OU";
-    if (activeFilter === "DC") return p.market === "DOUBLE_CHANCE";
+    if (activeFilter === "GOALS") {
+      return (
+        p.market === "GOALS_O15" ||
+        p.market === "GOALS_OU25" ||
+        p.market === "TEAM_O15" ||
+        p.market === "COMBO_DC_O15"
+      );
+    }
+    if (activeFilter === "CORNERS") return p.market === "CORNERS_OU" || p.market === "CORNERS_O85";
+    if (activeFilter === "DC") return p.market === "DOUBLE_CHANCE" || p.market === "COMBO_DC_O15";
     return true;
   });
 
@@ -227,11 +251,15 @@ export default function CandidateCard({
                       {formatMarketLabel(pick)}
                     </span>
                     <TierBadge pick={pick} />
-                    {pick.market === "GOALS_OU25" && pick.decision === "BET" && (
-                      <span className="px-2 py-0.5 rounded-lg bg-blue-500/20 text-blue-200 border border-blue-400/30 text-[10px] font-black">
-                        ⭐ Simple Recomendada
-                      </span>
-                    )}
+                    {(pick.market === "GOALS_OU25" ||
+                      pick.market === "COMBO_DC_O15" ||
+                      pick.market === "TEAM_O15" ||
+                      pick.market === "CORNERS_O85") &&
+                      pick.decision === "BET" && (
+                        <span className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-200 border border-amber-400/40 text-[10px] font-black">
+                          🔥 Cuota 1.50+
+                        </span>
+                      )}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-slate-300 mt-1">

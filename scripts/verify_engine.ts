@@ -24,6 +24,10 @@ async function main() {
     "CORNERS_O75",
     "DC_1X",
     "DC_X2",
+    "DC1X_O15",
+    "DCX2_O15",
+    "HOME_O15",
+    "CORNERS_O85",
   ];
 
   for (const chk of checks) {

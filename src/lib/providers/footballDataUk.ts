@@ -263,6 +263,8 @@ const TEAM_ALIASES: Record<string, string> = {
   "union saint gilloise": "st gilloise",
   "olympiakos": "olympiakos",
   "olympiacos": "olympiakos",
+  "atletico madrid": "ath madrid",
+  "internazionale": "inter",
 };
 
 export function normalizeTeamName(raw: string): string {

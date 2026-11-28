@@ -52,8 +52,12 @@ export interface MonteCarloResult {
   pU25: number;
   pCorners65: number;
   pCorners75: number;
+  pCorners85: number;
   p1X: number;
   pX2: number;
+  p1XO15: number;
+  pX2O15: number;
+  pHomeO15: number;
   pJointO15AndC65: number;
   pJointO15AndC75: number;
   expectedGoals: number;
@@ -135,8 +139,12 @@ export function simulateMatchMonteCarlo(params: {
   let cntO25 = 0;
   let cntC65 = 0;
   let cntC75 = 0;
+  let cntC85 = 0;
   let cnt1X = 0;
   let cntX2 = 0;
+  let cnt1XO15 = 0;
+  let cntX2O15 = 0;
+  let cntHomeO15 = 0;
   let cntJoint65 = 0;
   let cntJoint75 = 0;
   let sumGoalsSim = 0;
@@ -181,13 +189,18 @@ export function simulateMatchMonteCarlo(params: {
     const isO15 = totGoals >= 2;
     const isC65 = totCorners >= 7;
     const isC75 = totCorners >= 8;
+    const isC85 = totCorners >= 9;
 
     if (isO15) cntO15++;
     if (totGoals >= 3) cntO25++;
     if (isC65) cntC65++;
     if (isC75) cntC75++;
+    if (isC85) cntC85++;
     if (gCell.h >= gCell.a) cnt1X++;
     if (gCell.a >= gCell.h) cntX2++;
+    if (gCell.h >= gCell.a && isO15) cnt1XO15++;
+    if (gCell.a >= gCell.h && isO15) cntX2O15++;
+    if (gCell.h >= 2) cntHomeO15++;
     if (isO15 && isC65) cntJoint65++;
     if (isO15 && isC75) cntJoint75++;
   }
@@ -199,8 +212,12 @@ export function simulateMatchMonteCarlo(params: {
     pU25: Number((1.0 - cntO25 / simulations).toFixed(4)),
     pCorners65: Number((cntC65 / simulations).toFixed(4)),
     pCorners75: Number((cntC75 / simulations).toFixed(4)),
+    pCorners85: Number((cntC85 / simulations).toFixed(4)),
     p1X: Number((cnt1X / simulations).toFixed(4)),
     pX2: Number((cntX2 / simulations).toFixed(4)),
+    p1XO15: Number((cnt1XO15 / simulations).toFixed(4)),
+    pX2O15: Number((cntX2O15 / simulations).toFixed(4)),
+    pHomeO15: Number((cntHomeO15 / simulations).toFixed(4)),
     pJointO15AndC65: Number((cntJoint65 / simulations).toFixed(4)),
     pJointO15AndC75: Number((cntJoint75 / simulations).toFixed(4)),
     expectedGoals: Number((sumGoalsSim / simulations).toFixed(2)),

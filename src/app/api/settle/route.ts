@@ -61,7 +61,11 @@ export async function POST() {
         pick.candidate.awayTeam
       );
 
-      if (!ukMatch || (pick.market === "CORNERS_OU" && (ukMatch.hc === null || ukMatch.ac === null))) {
+      if (
+        !ukMatch ||
+        ((pick.market === "CORNERS_OU" || pick.market === "CORNERS_O85") &&
+          (ukMatch.hc === null || ukMatch.ac === null))
+      ) {
         const key = `${lgCode}:${pick.candidate.date}`;
         if (!espnNeedMap.has(key)) {
           espnNeedMap.set(key, {
@@ -70,7 +74,7 @@ export async function POST() {
             cornerTargets: [],
           });
         }
-        if (pick.market === "CORNERS_OU") {
+        if (pick.market === "CORNERS_OU" || pick.market === "CORNERS_O85") {
           espnNeedMap.get(key)!.cornerTargets.push({
             homeTeam: pick.candidate.homeTeam,
             awayTeam: pick.candidate.awayTeam,
@@ -111,7 +115,11 @@ export async function POST() {
       let ac: number | null = ukMatch ? ukMatch.ac : null;
       let settledSource = ukMatch ? "FDUK" : "";
 
-      if (!ukMatch || (pick.market === "CORNERS_OU" && (hc === null || ac === null))) {
+      if (
+        !ukMatch ||
+        ((pick.market === "CORNERS_OU" || pick.market === "CORNERS_O85") &&
+          (hc === null || ac === null))
+      ) {
         const espnList = espnMap.get(`${lgCode}:${pick.candidate.date}`) || [];
         const espnMatch = espnList.find(
           (m) =>
@@ -145,13 +153,19 @@ export async function POST() {
         won = pick.selection === "UNDER" ? totGoals < pick.line : totGoals > pick.line;
       } else if (pick.market === "GOALS_OU25") {
         won = pick.selection === "UNDER" ? totGoals < 2.5 : totGoals > 2.5;
-      } else if (pick.market === "CORNERS_OU") {
+      } else if (pick.market === "CORNERS_OU" || pick.market === "CORNERS_O85") {
         if (totCorners !== null) {
           won = totCorners > pick.line;
         }
       } else if (pick.market === "DOUBLE_CHANCE") {
         if (pick.selection === "1X") won = fthg >= ftag;
         else if (pick.selection === "X2") won = ftag >= fthg;
+      } else if (pick.market === "COMBO_DC_O15") {
+        if (pick.selection === "1X_O15") won = fthg >= ftag && totGoals >= 2;
+        else if (pick.selection === "X2_O15") won = ftag >= fthg && totGoals >= 2;
+      } else if (pick.market === "TEAM_O15") {
+        if (pick.selection === "HOME_OVER") won = fthg >= 2;
+        else if (pick.selection === "AWAY_OVER") won = ftag >= 2;
       }
 
       if (won === null) {

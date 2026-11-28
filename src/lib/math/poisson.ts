@@ -96,6 +96,9 @@ export interface DixonColesMatrixResult {
   pA: number;
   p00: number;
   pLe1: number;
+  p1XO15: number;
+  pX2O15: number;
+  pHomeO15: number;
 }
 
 /**
@@ -129,6 +132,7 @@ export function dixonColesMatrix(
 
   const inv = 1.0 / Math.max(1e-12, total);
   let pH = 0, pD = 0, pA = 0, pO15 = 0, pO25 = 0, p00 = 0, pLe1 = 0;
+  let p1XO15 = 0, pX2O15 = 0, pHomeO15 = 0;
 
   for (let h = 0; h <= maxGoals; h++) {
     for (let a = 0; a <= maxGoals; a++) {
@@ -142,6 +146,9 @@ export function dixonColesMatrix(
       if (totG > 2.5) pO25 += p;
       if (totG === 0) p00 += p;
       if (totG <= 1) pLe1 += p;
+      if (h >= a && totG >= 2) p1XO15 += p;
+      if (a >= h && totG >= 2) pX2O15 += p;
+      if (h >= 2) pHomeO15 += p;
     }
   }
 
@@ -156,6 +163,9 @@ export function dixonColesMatrix(
     pA: clamp(pA, 0.001, 0.999),
     p00: clamp(p00, 0.001, 0.999),
     pLe1: clamp(pLe1, 0.001, 0.999),
+    p1XO15: clamp(p1XO15, 0.001, 0.999),
+    pX2O15: clamp(pX2O15, 0.001, 0.999),
+    pHomeO15: clamp(pHomeO15, 0.001, 0.999),
   };
 }
 

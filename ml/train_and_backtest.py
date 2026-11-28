@@ -66,6 +66,10 @@ TARGETS = [
     "CORNERS_O75",
     "DC_1X",
     "DC_X2",
+    "DC1X_O15",
+    "DCX2_O15",
+    "HOME_O15",
+    "CORNERS_O85",
 ]
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -134,6 +138,7 @@ def dixon_coles_matrix(lam_h: float, lam_a: float, rho: float, max_goals: int = 
 
     inv = 1.0 / max(1e-12, total)
     p_h = p_d = p_a = p_o15 = p_o25 = p_00 = p_le1 = 0.0
+    p_1x_o15 = p_x2_o15 = p_home_o15 = 0.0
     for h in range(max_goals + 1):
         for a in range(max_goals + 1):
             p = mat[h][a] * inv
@@ -152,6 +157,12 @@ def dixon_coles_matrix(lam_h: float, lam_a: float, rho: float, max_goals: int = 
                 p_00 += p
             if tot_g <= 1:
                 p_le1 += p
+            if h >= a and tot_g >= 2:
+                p_1x_o15 += p
+            if a >= h and tot_g >= 2:
+                p_x2_o15 += p
+            if h >= 2:
+                p_home_o15 += p
 
     return {
         "pO15": clamp(p_o15, 0.001, 0.999),
@@ -164,6 +175,9 @@ def dixon_coles_matrix(lam_h: float, lam_a: float, rho: float, max_goals: int = 
         "pA": clamp(p_a, 0.001, 0.999),
         "p00": clamp(p_00, 0.001, 0.999),
         "pLe1": clamp(p_le1, 0.001, 0.999),
+        "p1XO15": clamp(p_1x_o15, 0.001, 0.999),
+        "pX2O15": clamp(p_x2_o15, 0.001, 0.999),
+        "pHomeO15": clamp(p_home_o15, 0.001, 0.999),
     }
 
 
@@ -257,12 +271,18 @@ def download_csv(season: str, div: str) -> List[Dict[str, str]]:
     if use_cache:
         text = cache_file.read_text(encoding="utf-8-sig", errors="ignore")
     else:
-        url = f"https://www.football-data.co.uk/mmz4281/{season}/{div}.csv"
-        req = urllib.request.Request(url, headers=HTTP_HEADERS)
-        with urllib.request.urlopen(req, timeout=20, context=SSL_CTX) as r:
-            raw_bytes = r.read()
-        text = raw_bytes.decode("utf-8-sig", errors="ignore")
-        cache_file.write_text(text, encoding="utf-8-sig")
+        try:
+            url = f"https://www.football-data.co.uk/mmz4281/{season}/{div}.csv"
+            req = urllib.request.Request(url, headers=HTTP_HEADERS)
+            with urllib.request.urlopen(req, timeout=20, context=SSL_CTX) as r:
+                raw_bytes = r.read()
+            text = raw_bytes.decode("utf-8-sig", errors="ignore")
+            cache_file.write_text(text, encoding="utf-8-sig")
+        except Exception:
+            if cache_file.exists():
+                text = cache_file.read_text(encoding="utf-8-sig", errors="ignore")
+            else:
+                raise
 
     return list(csv.DictReader(io.StringIO(text)))
 
@@ -610,6 +630,7 @@ def build_features_chronologically(
 
             nb_o65 = prob_over_neg_bin(lam_c_tot, lg["nbDispersion"], 6.5)
             nb_o75 = prob_over_neg_bin(lam_c_tot, lg["nbDispersion"], 7.5)
+            nb_o85 = prob_over_neg_bin(lam_c_tot, lg["nbDispersion"], 8.5)
 
             sot_exp = (
                 (h_sotf / max(1.0, lg["avgHomeSot"])) * (a_sota / max(1.0, lg["avgHomeSot"])) * lg["avgHomeSot"]
@@ -641,6 +662,10 @@ def build_features_chronologically(
                 "CORNERS_O75": [safe_logit(nb_o75)] + base_tail,
                 "DC_1X": [safe_logit(dc["p1X"])] + base_tail,
                 "DC_X2": [safe_logit(dc["pX2"])] + base_tail,
+                "DC1X_O15": [safe_logit(dc["p1XO15"])] + base_tail,
+                "DCX2_O15": [safe_logit(dc["pX2O15"])] + base_tail,
+                "HOME_O15": [safe_logit(dc["pHomeO15"])] + base_tail,
+                "CORNERS_O85": [safe_logit(nb_o85)] + base_tail,
             }
 
             tot_g = m.fthg + m.ftag
@@ -658,6 +683,10 @@ def build_features_chronologically(
                         "CORNERS_O75": nb_o75,
                         "DC_1X": dc["p1X"],
                         "DC_X2": dc["pX2"],
+                        "DC1X_O15": dc["p1XO15"],
+                        "DCX2_O15": dc["pX2O15"],
+                        "HOME_O15": dc["pHomeO15"],
+                        "CORNERS_O85": nb_o85,
                     },
                     "labels": {
                         "GOALS_O15": 1 if tot_g > 1.5 else 0,
@@ -666,6 +695,10 @@ def build_features_chronologically(
                         "CORNERS_O75": (1 if tot_c > 7.5 else 0) if tot_c is not None else None,
                         "DC_1X": 1 if m.fthg >= m.ftag else 0,
                         "DC_X2": 1 if m.ftag >= m.fthg else 0,
+                        "DC1X_O15": 1 if (m.fthg >= m.ftag and tot_g >= 2) else 0,
+                        "DCX2_O15": 1 if (m.ftag >= m.fthg and tot_g >= 2) else 0,
+                        "HOME_O15": 1 if m.fthg >= 2 else 0,
+                        "CORNERS_O85": (1 if tot_c >= 9 else 0) if tot_c is not None else None,
                     },
                     "rawTeamStats": {
                         "h_gf": h_gf, "h_ga": h_ga, "h_cf": h_cf, "h_ca": h_ca,
@@ -989,7 +1022,7 @@ def main() -> None:
 
         # Reliability buckets on 26/27 test split
         buckets = {}
-        for label, lo, hi in [("70-75%", 0.70, 0.75), ("75-80%", 0.75, 0.80), ("80-85%", 0.80, 0.85), ("85%+", 0.85, 1.01)]:
+        for label, lo, hi in [("65-70%", 0.65, 0.70), ("70-75%", 0.70, 0.75), ("75-80%", 0.75, 0.80), ("80-85%", 0.80, 0.85), ("85%+", 0.85, 1.01)]:
             mask = (p_te_final >= lo) & (p_te_final < hi)
             cnt = int(np.sum(mask))
             if cnt > 0:
@@ -1034,6 +1067,9 @@ def main() -> None:
         "CORNERS_O65_S": [0, 0], "CORNERS_O65_A": [0, 0],
         "CORNERS_O75_S": [0, 0], "CORNERS_O75_A": [0, 0],
         "DC_S": [0, 0], "DC_A": [0, 0],
+        "COMBO_DC_O15_S": [0, 0], "COMBO_DC_O15_A": [0, 0],
+        "HOME_O15_S": [0, 0], "HOME_O15_A": [0, 0],
+        "CORNERS_O85_S": [0, 0], "CORNERS_O85_A": [0, 0],
     }
 
     for row_idx, probs in test_probs_by_row.items():
@@ -1080,6 +1116,37 @@ def main() -> None:
             elif best_dc_p >= 0.78:
                 tier_stats["DC_A"][0] += best_dc_y
                 tier_stats["DC_A"][1] += 1
+
+        if "DC1X_O15" in probs and "DCX2_O15" in probs:
+            p_c1x, p_cx2 = probs["DC1X_O15"], probs["DCX2_O15"]
+            best_cp = p_c1x if p_c1x >= p_cx2 else p_cx2
+            best_cy = labels["DC1X_O15"] if p_c1x >= p_cx2 else labels["DCX2_O15"]
+            if best_cp >= 0.72:
+                tier_stats["COMBO_DC_O15_S"][0] += best_cy
+                tier_stats["COMBO_DC_O15_S"][1] += 1
+            elif best_cp >= 0.65:
+                tier_stats["COMBO_DC_O15_A"][0] += best_cy
+                tier_stats["COMBO_DC_O15_A"][1] += 1
+
+        if "HOME_O15" in probs:
+            p_ho = probs["HOME_O15"]
+            y_ho = labels["HOME_O15"]
+            if p_ho >= 0.70:
+                tier_stats["HOME_O15_S"][0] += y_ho
+                tier_stats["HOME_O15_S"][1] += 1
+            elif p_ho >= 0.65:
+                tier_stats["HOME_O15_A"][0] += y_ho
+                tier_stats["HOME_O15_A"][1] += 1
+
+        if "CORNERS_O85" in probs and labels["CORNERS_O85"] is not None:
+            p_c85 = probs["CORNERS_O85"]
+            y_c85 = labels["CORNERS_O85"]
+            if p_c85 >= 0.72:
+                tier_stats["CORNERS_O85_S"][0] += y_c85
+                tier_stats["CORNERS_O85_S"][1] += 1
+            elif p_c85 >= 0.68:
+                tier_stats["CORNERS_O85_A"][0] += y_c85
+                tier_stats["CORNERS_O85_A"][1] += 1
 
         # Real EV+ bets on GOALS_OU25
         if "GOALS_O25" in probs and m.odds_o25 and m.odds_u25:
@@ -1165,7 +1232,7 @@ def main() -> None:
         )
 
     export_payload = {
-        "version": "4.0.0",
+        "version": "5.0.0",
         "trainedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "seasons": SEASONS,
         "trainCutoff": TRAIN_CUTOFF,

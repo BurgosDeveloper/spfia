@@ -19,7 +19,7 @@ import {
 } from "react-icons/io5";
 
 type MainTab = "PICKS" | "HISTORY";
-type PickFilter = "VALUE" | "ALL" | "GOALS" | "CORNERS" | "DC";
+type PickFilter = "VALUE_150" | "VALUE" | "ALL" | "GOALS" | "CORNERS" | "DC";
 type DateViewMode = "TODAY" | "UPCOMING" | "DATE";
 
 function getLocalTodayIso(): string {
@@ -43,10 +43,12 @@ export default function Home() {
   // Resultados
   const [candidates, setCandidates] = useState<CandidateResult[]>([]);
   const [parlay, setParlay] = useState<ParlayRecommendation | null>(null);
+  const [valueParlay, setValueParlay] = useState<ParlayRecommendation | null>(null);
   const [sourceInfo, setSourceInfo] = useState("");
   const [nextAvailableDate, setNextAvailableDate] = useState<string | null>(null);
-  const [activeFilter, setActiveFilter] = useState<PickFilter>("VALUE");
+  const [activeFilter, setActiveFilter] = useState<PickFilter>("VALUE_150");
   const [parlayHouseOdds, setParlayHouseOdds] = useState("");
+  const [valueParlayHouseOdds, setValueParlayHouseOdds] = useState("");
   const [hasScannedOnce, setHasScannedOnce] = useState(false);
 
   // Historial & Backtest
@@ -114,6 +116,7 @@ export default function Home() {
         if (res.ok && data.ok) {
           setCandidates(data.candidates || []);
           setParlay(data.parlay || null);
+          setValueParlay(data.valueParlay || null);
           setSourceInfo(data.sourceInfo || "");
           setNextAvailableDate(data.nextAvailableDate || null);
         } else {
@@ -175,8 +178,19 @@ export default function Home() {
   const tierSCount = allPicks.filter((p) => p.tier === "TIER_S").length;
   const tierACount = allPicks.filter((p) => p.tier === "TIER_A").length;
   const valueMatches = candidates.filter((c) => c.picks.some((p) => p.decision === "BET"));
+  const isValue150Market = (market: string) =>
+    market === "COMBO_DC_O15" ||
+    market === "TEAM_O15" ||
+    market === "CORNERS_O85" ||
+    market === "GOALS_OU25";
+  const value150Matches = candidates.filter((c) =>
+    c.picks.some((p) => p.decision === "BET" && isValue150Market(p.market))
+  );
 
   const filteredCandidates = candidates.filter((c) => {
+    if (activeFilter === "VALUE_150") {
+      return c.picks.some((p) => p.decision === "BET" && isValue150Market(p.market));
+    }
     if (activeFilter === "VALUE") return c.picks.some((p) => p.decision === "BET");
     return true;
   });
@@ -185,6 +199,12 @@ export default function Home() {
   const parlayEv =
     parlay && Number.isFinite(parlayOddsNum) && parlayOddsNum > 1.01
       ? parlay.combinedProbability * parlayOddsNum - 1.0
+      : null;
+
+  const valueParlayOddsNum = Number(valueParlayHouseOdds);
+  const valueParlayEv =
+    valueParlay && Number.isFinite(valueParlayOddsNum) && valueParlayOddsNum > 1.01
+      ? valueParlay.combinedProbability * valueParlayOddsNum - 1.0
       : null;
 
   return (
@@ -357,6 +377,105 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* Doble Rentable 2.25+ (2 Partidos · Cuota >= 1.50 c/u) */}
+              {valueParlay && (
+                <section className="clay-glass-card-active p-4 md:p-5 border border-[#EDBB00]/50">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3.5">
+                    <div className="flex items-start gap-2.5">
+                      <IoSparkles className="w-6 h-6 text-[#EDBB00] shrink-0 mt-0.5" />
+                      <div>
+                        <h2 className="text-base md:text-lg font-black text-white">
+                          🚀 Doble Rentable 2.25+ ({valueParlay.legs.length} Partidos &bull; Cuota &ge; 1.50 c/u)
+                        </h2>
+                        <p className="text-xs text-slate-300 mt-0.5">
+                          Seguridad conjunta:{" "}
+                          <strong className="text-white">
+                            {(valueParlay.combinedProbability * 100).toFixed(1)}%
+                          </strong>{" "}
+                          &bull; Cuota rentable mínima:{" "}
+                          <strong className="text-[#EDBB00]">&ge; {valueParlay.minCombinedOdds}</strong>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-slate-950/75 px-3 py-2 rounded-xl border border-slate-800 self-start md:self-auto">
+                      <span className="text-[11px] text-slate-400 font-bold">
+                        Cuota en casa:
+                      </span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder={`${valueParlay.minCombinedOdds}`}
+                        value={valueParlayHouseOdds}
+                        onChange={(e) => setValueParlayHouseOdds(e.target.value)}
+                        className="w-16 px-2 py-1 text-xs font-bold bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-[#EDBB00]"
+                      />
+                      {valueParlayEv !== null && (
+                        <span
+                          className={`text-xs font-black ${
+                            valueParlayEv > 0 ? "text-emerald-400" : "text-rose-400"
+                          }`}
+                        >
+                          {valueParlayEv > 0
+                            ? `✅ +${(valueParlayEv * 100).toFixed(1)}% EV`
+                            : `⚠️ Pide ≥ ${valueParlay.minCombinedOdds}`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    {valueParlay.legs.map((leg, i) => (
+                      <div
+                        key={i}
+                        className="p-3 rounded-2xl bg-slate-950/75 border border-[#EDBB00]/30 text-xs space-y-1"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-blue-300 font-bold truncate">
+                            {leg.leagueName} &bull;{" "}
+                            {new Date(leg.kickoffUtc).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                          <span className="text-[10px] font-black text-[#EDBB00] shrink-0">
+                            {leg.tier === "TIER_S" ? "💎 TIER S" : "🟢 TIER A"}
+                          </span>
+                        </div>
+                        <div className="font-black text-white text-sm">{leg.matchName}</div>
+                        <div className="text-[#EDBB00] font-black">
+                          {leg.market === "COMBO_DC_O15"
+                            ? leg.selection === "1X_O15"
+                              ? "1X + Over 1.5 Goles"
+                              : "X2 + Over 1.5 Goles"
+                            : leg.market === "TEAM_O15"
+                              ? "Local Over 1.5 Goles"
+                              : leg.market === "CORNERS_O85"
+                                ? "Córneres Over 8.5"
+                                : `${leg.selection} ${leg.line} Goles`}
+                        </div>
+                        <div className="text-slate-400">
+                          Prob:{" "}
+                          <strong className="text-white">
+                            {(leg.probability * 100).toFixed(1)}%
+                          </strong>{" "}
+                          &bull; Cuota mínima:{" "}
+                          <strong className="text-emerald-300">&ge; {leg.minOdds}</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 pt-2.5 border-t border-white/10 text-[11px] text-slate-400 flex items-center gap-1.5">
+                    <IoShieldCheckmark className="w-4 h-4 text-[#EDBB00] shrink-0" />
+                    <span>
+                      Modo Rentabilidad: solo 2 partidos independientes pagando &ge; 1.50 c/u (&ge; 2.25
+                      juntos). Si TriunfoBet paga menos de 1.50 en una pata, NO fuerces la apuesta.
+                    </span>
+                  </div>
+                </section>
+              )}
+
               {/* Combinada Recomendada */}
               {parlay && (
                 <section className="clay-glass-card-active p-4 md:p-5">
@@ -460,7 +579,8 @@ export default function Home() {
                 <div className="flex flex-wrap items-center gap-1 p-1 rounded-2xl bg-slate-950/80 border border-slate-800">
                   {(
                     [
-                      ["VALUE", `Recomendados (${valueMatches.length})`],
+                      ["VALUE_150", `🔥 Cuota 1.50+ (${value150Matches.length})`],
+                      ["VALUE", `Todos Aptos (${valueMatches.length})`],
                       ["ALL", `Todos (${candidates.length})`],
                       ["GOALS", "Goles"],
                       ["CORNERS", "Córneres"],
@@ -564,6 +684,22 @@ export default function Home() {
                     val: historyData.evSummary.TIERS?.CORNERS_O75_S,
                   },
                   { label: "Doble Oport. (Tier S)", val: historyData.evSummary.TIERS?.DC_S },
+                  {
+                    label: "1X/X2 + O1.5 [1.50+] (S)",
+                    val: historyData.evSummary.TIERS?.COMBO_DC_O15_S,
+                  },
+                  {
+                    label: "Local +1.5 [1.50+] (S)",
+                    val: historyData.evSummary.TIERS?.HOME_O15_S,
+                  },
+                  {
+                    label: "Córneres >8.5 [1.50+] (S)",
+                    val: historyData.evSummary.TIERS?.CORNERS_O85_S,
+                  },
+                  {
+                    label: "1X/X2 + O1.5 [1.50+] (A)",
+                    val: historyData.evSummary.TIERS?.COMBO_DC_O15_A,
+                  },
                 ].map((item, idx) => (
                   <div
                     key={idx}
